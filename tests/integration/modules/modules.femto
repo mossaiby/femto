@@ -1,0 +1,23 @@
+namespace math
+{
+    #export
+    PI :: float64(3.141592653589793);
+
+    #export
+    add :: (int32 a, int32 b) -> int32
+    {
+        return a + b;
+    }
+
+    #export
+    Point :: struct
+    {
+        float32 x = 0.0;
+        float32 y = 0.0;
+    }
+}
+
+test_namespace :: () -> int32
+{
+    return math::add(1, 2);
+}

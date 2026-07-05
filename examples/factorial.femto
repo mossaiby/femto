@@ -1,0 +1,23 @@
+// Factorial - Compute n! recursively
+// Demonstrates recursion, if/then/else, and arithmetic
+
+factorial :: (int32 n) -> int32
+{
+    if (n <= 1) then
+    {
+        return 1;
+    }
+    else
+    {
+        return n * factorial(n - 1);
+    }
+}
+
+main :: (string8[] args) -> int32
+{
+    int32 result = factorial(10);
+    std::io::print("10! = ");
+    std::io::print(std::string8::from_int(result));
+    std::io::print("\n");
+    return 0;
+}

@@ -1,0 +1,56 @@
+// Prime Numbers - Find and print prime numbers
+// Demonstrates nested loops, break, and boolean logic
+
+is_prime :: (int32 n) -> bool8
+{
+    if (n < 2) then
+    {
+        return false;
+    }
+    if (n == 2) then
+    {
+        return true;
+    }
+    if (n % 2 == 0) then
+    {
+        return false;
+    }
+    int32 i = 3;
+    while (i * i <= n)
+    {
+        if (n % i == 0) then
+        {
+            return false;
+        }
+        i = i + 2;
+    }
+    return true;
+}
+
+print_primes :: (int32 limit) -> void
+{
+    int32 count = 0;
+    int32 n = 2;
+    while (n <= limit)
+    {
+        if (is_prime(n)) then
+        {
+            std::io::print(std::string8::from_int(n));
+            std::io::print(" ");
+            count = count + 1;
+            if (count % 10 == 0) then
+            {
+                std::io::print("\n");
+            }
+        }
+        n = n + 1;
+    }
+    std::io::print("\n");
+}
+
+main :: (string8[] args) -> int32
+{
+    std::io::print("Primes up to 100:\n");
+    print_primes(100);
+    return 0;
+}

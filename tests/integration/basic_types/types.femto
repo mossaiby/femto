@@ -1,0 +1,35 @@
+test_int :: () -> int32
+{
+    int32 x = 42;
+    return x;
+}
+
+test_uint :: () -> uint32
+{
+    uint32 x = 100;
+    return x;
+}
+
+test_float :: () -> float64
+{
+    float64 x = 3.14;
+    return x;
+}
+
+test_bool :: () -> bool8
+{
+    bool8 x = true;
+    return x;
+}
+
+test_char :: () -> char8
+{
+    char8 c = 'a';
+    return c;
+}
+
+test_string :: () -> string8
+{
+    string8 s = "hello";
+    return s;
+}

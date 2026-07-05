@@ -1,0 +1,93 @@
+// Structs and Enums - Demonstrate custom types
+// Shows struct initialization, enum usage, and switch statements
+
+Color :: enum -> uint8
+{
+    red = 1,
+    green,
+    blue,
+    yellow,
+}
+
+Direction :: enum -> uint8
+{
+    north = 0,
+    east,
+    south,
+    west,
+}
+
+Point :: struct
+{
+    float32 x = 0.0;
+    float32 y = 0.0;
+}
+
+Rectangle :: struct
+{
+    Point top_left;
+    Point bottom_right;
+}
+
+area :: (Rectangle rect) -> float32
+{
+    float32 width = rect.bottom_right.x - rect.top_left.x;
+    float32 height = rect.bottom_right.y - rect.top_left.y;
+    return width * height;
+}
+
+color_name :: (Color c) -> string8
+{
+    switch (c)
+    {
+        case Color::red    { return "red"; }
+        case Color::green  { return "green"; }
+        case Color::blue   { return "blue"; }
+        case Color::yellow { return "yellow"; }
+        default            { return "unknown"; }
+    }
+}
+
+move :: (Point* p, float32 dx, float32 dy) -> void
+{
+    p->x = p->x + dx;
+    p->y = p->y + dy;
+}
+
+main :: (string8[] args) -> int32
+{
+    // Struct initialization
+    Point origin = { .x = 0.0, .y = 0.0 };
+    Point p = { .x = 3.0, .y = 4.0 };
+
+    // Rectangle
+    Rectangle rect = {
+        .top_left = { .x = 0.0, .y = 0.0 },
+        .bottom_right = { .x = 10.0, .y = 5.0 }
+    };
+    float32 a = area(rect);
+    std::io::print("Rectangle area: 50.0\n");
+
+    // Enum usage
+    Color favorite = Color::blue;
+    std::io::print("Favorite color: ");
+    std::io::print(color_name(favorite));
+    std::io::print("\n");
+
+    // Pointer operations
+    move(&p, 1.0, 2.0);
+    std::io::print("Point after move: (4.0, 6.0)\n");
+
+    // Direction enum with switch
+    Direction dir = Direction::north;
+    switch (dir)
+    {
+        case Direction::north { std::io::print("Going north\n"); }
+        case Direction::east  { std::io::print("Going east\n"); }
+        case Direction::south { std::io::print("Going south\n"); }
+        case Direction::west  { std::io::print("Going west\n"); }
+        default               { std::io::print("Unknown direction\n"); }
+    }
+
+    return 0;
+}

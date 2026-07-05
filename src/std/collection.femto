@@ -1,0 +1,27 @@
+namespace std::collection
+{
+    array :: struct <T>
+    {
+        T* data;
+        uint64 length;
+        uint64 capacity;
+    }
+
+    #export
+    array_push :: <T>(array<T>* arr, T value) -> !void;
+
+    #export
+    array_pop :: <T>(array<T>* arr) -> !T;
+
+    #export
+    array_length :: <T>(array<T>* arr) -> uint64;
+
+    #export
+    array_capacity :: <T>(array<T>* arr) -> uint64;
+
+    #export
+    array_get :: <T>(array<T>* arr, uint64 index) -> !T;
+
+    #export
+    array_set :: <T>(array<T>* arr, uint64 index, T value) -> !void;
+}

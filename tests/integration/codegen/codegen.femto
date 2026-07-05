@@ -1,0 +1,42 @@
+add :: (int32 a, int32 b) -> int32
+{
+    return a + b;
+}
+
+multiply :: (int32 a, int32 b) -> int32
+{
+    return a * b;
+}
+
+factorial :: (int32 n) -> int32
+{
+    if (n <= 1) then
+    {
+        return 1;
+    }
+    else
+    {
+        return n * factorial(n - 1);
+    }
+}
+
+fibonacci :: (int32 n) -> int32
+{
+    if (n <= 1) then
+    {
+        return n;
+    }
+    else
+    {
+        return fibonacci(n - 1) + fibonacci(n - 2);
+    }
+}
+
+main :: (string8[] args) -> int32
+{
+    int32 sum = add(10, 20);
+    int32 product = multiply(5, 6);
+    int32 fact = factorial(5);
+    int32 fib = fibonacci(10);
+    return 0;
+}

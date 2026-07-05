@@ -1,0 +1,28 @@
+max :: <T>(T a, T b) -> T
+{
+    if (a > b) then
+    {
+        return a;
+    }
+    else
+    {
+        return b;
+    }
+}
+
+Pair :: struct <K, V>
+{
+    K key;
+    V value;
+}
+
+test_max :: () -> int32
+{
+    return max<int32>(3, 7);
+}
+
+test_pair :: () -> string8
+{
+    Pair<string8, int32> p = { .key = "answer", .value = 42 };
+    return p.key;
+}

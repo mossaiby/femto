@@ -1,0 +1,8 @@
+// Hello World - The classic first program
+// Prints "Hello, World!" to standard output
+
+main :: (string8[] args) -> int32
+{
+    std::io::print("Hello, World!\n");
+    return 0;
+}

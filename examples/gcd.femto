@@ -1,0 +1,34 @@
+// GCD - Greatest Common Divisor using Euclidean algorithm
+// Demonstrates recursion and the do/while loop
+
+gcd :: (int32 a, int32 b) -> int32
+{
+    while (b != 0)
+    {
+        int32 temp = b;
+        b = a % b;
+        a = temp;
+    }
+    return a;
+}
+
+lcm :: (int32 a, int32 b) -> int32
+{
+    return (a / gcd(a, b)) * b;
+}
+
+main :: (string8[] args) -> int32
+{
+    int32 a = 48;
+    int32 b = 18;
+    int32 result = gcd(a, b);
+    std::io::print("gcd(48, 18) = ");
+    std::io::print(std::string8::from_int(result));
+    std::io::print("\n");
+
+    int32 l = lcm(4, 6);
+    std::io::print("lcm(4, 6) = ");
+    std::io::print(std::string8::from_int(l));
+    std::io::print("\n");
+    return 0;
+}

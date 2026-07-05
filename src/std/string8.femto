@@ -1,0 +1,26 @@
+namespace std::string8
+{
+    #export
+    concat :: (string8 a, string8 b) -> !string8;
+
+    #export
+    repeat :: (string8 s, uint32 n) -> !string8;
+
+    #export
+    slice :: (string8 s, uint32 start, uint32 end) -> !string8;
+
+    #export
+    from_chars :: (char8[] buf) -> !string8;
+
+    #export
+    from_int :: (int64 n) -> !string8;
+
+    #export
+    from_float :: (float64 f) -> !string8;
+
+    #export
+    length :: (string8 s) -> uint32;
+
+    #export
+    equals :: (string8 a, string8 b) -> bool8;
+}

@@ -1,0 +1,35 @@
+// FizzBuzz - Classic programming challenge
+// Prints numbers 1-100, replacing multiples of 3 with "Fizz",
+// multiples of 5 with "Buzz", and multiples of both with "FizzBuzz"
+
+fizzbuzz :: (int32 n) -> void
+{
+    int32 i = 1;
+    while (i <= n)
+    {
+        if (i % 15 == 0) then
+        {
+            std::io::print("FizzBuzz\n");
+        }
+        else if (i % 3 == 0) then
+        {
+            std::io::print("Fizz\n");
+        }
+        else if (i % 5 == 0) then
+        {
+            std::io::print("Buzz\n");
+        }
+        else
+        {
+            std::io::print(std::string8::from_int(i));
+            std::io::print("\n");
+        }
+        i = i + 1;
+    }
+}
+
+main :: (string8[] args) -> int32
+{
+    fizzbuzz(20);
+    return 0;
+}

@@ -1,0 +1,71 @@
+// Pattern Printing - Print various patterns
+// Demonstrates nested loops and string building
+
+print_stars :: (int32 n) -> void
+{
+    // Right triangle
+    std::io::print("Right triangle:\n");
+    int32 i = 1;
+    while (i <= n)
+    {
+        int32 j = 0;
+        while (j < i)
+        {
+            std::io::print("*");
+            j = j + 1;
+        }
+        std::io::print("\n");
+        i = i + 1;
+    }
+    std::io::print("\n");
+}
+
+print_diamond :: (int32 n) -> void
+{
+    // Diamond pattern
+    std::io::print("Diamond:\n");
+    int32 i = 1;
+    while (i <= n)
+    {
+        int32 j = 0;
+        while (j < n - i)
+        {
+            std::io::print(" ");
+            j = j + 1;
+        }
+        j = 0;
+        while (j < 2 * i - 1)
+        {
+            std::io::print("*");
+            j = j + 1;
+        }
+        std::io::print("\n");
+        i = i + 1;
+    }
+    // Bottom half
+    i = n - 1;
+    while (i >= 1)
+    {
+        int32 j = 0;
+        while (j < n - i)
+        {
+            std::io::print(" ");
+            j = j + 1;
+        }
+        j = 0;
+        while (j < 2 * i - 1)
+        {
+            std::io::print("*");
+            j = j + 1;
+        }
+        std::io::print("\n");
+        i = i - 1;
+    }
+}
+
+main :: (string8[] args) -> int32
+{
+    print_stars(5);
+    print_diamond(5);
+    return 0;
+}

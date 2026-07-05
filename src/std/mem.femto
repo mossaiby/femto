@@ -1,0 +1,14 @@
+namespace std::mem
+{
+    #export
+    alloc :: <T>(uint64 count) -> !T[];
+
+    #export
+    free :: (void* ptr) -> void;
+
+    #export
+    copy :: (void* dest, void* src, uint64 size) -> void;
+
+    #export
+    zero :: (void* ptr, uint64 size) -> void;
+}

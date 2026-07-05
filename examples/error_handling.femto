@@ -1,0 +1,57 @@
+// Error Handling - Demonstrates the !T result type
+// and ?? result-branch operator
+
+divide :: (int32 a, int32 b) -> !int32
+{
+    if (b == 0) then
+    {
+        return failure(1);
+    }
+    else
+    {
+        return success(a / b);
+    }
+}
+
+sqrt_approx :: (float64 x) -> !float64
+{
+    if (x < 0.0) then
+    {
+        return failure(2);
+    }
+    float64 result = x;
+    int32 i = 0;
+    while (i < 10)
+    {
+        result = (result + x / result) / 2.0;
+        i = i + 1;
+    }
+    return success(result);
+}
+
+main :: (string8[] args) -> int32
+{
+    // Successful division
+    divide(10, 3)
+        ?? (int32 result) { std::io::print("10 / 3 = "); std::io::print(std::string8::from_int(result)); std::io::print("\n"); }
+        :  (int32 code)   { std::io::print("Division failed\n"); };
+
+    // Failed division (division by zero)
+    divide(10, 0)
+        ?? (int32 result) { std::io::print("This should not print\n"); }
+        :  (int32 code)   { std::io::print("Division by zero detected, code: "); std::io::print(std::string8::from_int(code)); std::io::print("\n"); };
+
+    // Propagation example
+    int32 value = safe_compute();
+    std::io::print("safe_compute result: ");
+    std::io::print(std::string8::from_int(value));
+    std::io::print("\n");
+    return 0;
+}
+
+safe_compute :: () -> !int32
+{
+    int32 a = divide(100, 5)??;
+    int32 b = divide(50, 3)??;
+    return success(a + b);
+}

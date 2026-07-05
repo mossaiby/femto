@@ -1,0 +1,17 @@
+namespace std::io
+{
+    #export
+    print :: (string8 msg) -> void;
+
+    #export
+    println :: (string8 msg) -> void;
+
+    #export
+    read :: (string8 filename) -> !string8;
+
+    #export
+    write :: (string8 filename, string8 content) -> !void;
+
+    #export
+    format :: (string8 template, ...) -> !string8;
+}

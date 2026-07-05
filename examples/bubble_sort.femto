@@ -1,0 +1,50 @@
+// Bubble Sort - Sort an array using bubble sort algorithm
+// Demonstrates arrays, foreach, and nested loops
+
+bubble_sort :: (int32[] arr) -> void
+{
+    uint32 n = arr.length();
+    uint32 i = 0;
+    while (i < n)
+    {
+        uint32 j = 0;
+        while (j < n - i - 1)
+        {
+            if (arr[j] > arr[j + 1]) then
+            {
+                // Swap elements
+                int32 temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+print_array :: (int32[] arr) -> void
+{
+    uint32 i = 0;
+    while (i < arr.length())
+    {
+        std::io::print(std::string8::from_int(arr[i]));
+        if (i < arr.length() - 1) then
+        {
+            std::io::print(" ");
+        }
+        i = i + 1;
+    }
+    std::io::print("\n");
+}
+
+main :: (string8[] args) -> int32
+{
+    int32[] data = [64, 34, 25, 12, 22, 11, 90];
+    std::io::print("Before sorting: ");
+    print_array(data);
+    bubble_sort(data);
+    std::io::print("After sorting:  ");
+    print_array(data);
+    return 0;
+}
