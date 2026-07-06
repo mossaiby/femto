@@ -1,0 +1,61 @@
+// Float Math - Demonstrate floating-point operations
+// Shows float32/float64 arithmetic, comparisons, and type conversions
+
+circle_area :: (float64 radius) -> float64
+{
+    float64 pi = 3.141592653589793;
+    return pi * radius * radius;
+}
+
+distance :: (float64 x1, float64 y1, float64 x2, float64 y2) -> float64
+{
+    float64 dx = x2 - x1;
+    float64 dy = y2 - y1;
+    return (dx * dx + dy * dy);
+}
+
+average :: (float64 a, float64 b) -> float64
+{
+    return (a + b) / 2.0;
+}
+
+is_positive :: (float64 x) -> bool8
+{
+    return x > 0.0;
+}
+
+main :: (string8[] args) -> int32
+{
+    // Test float64 arithmetic
+    float64 r = 5.0;
+    float64 area = circle_area(r);
+    std::io::print("Circle area: ");
+    std::io::print(std::string8::from_float(area));
+    std::io::print("\n");
+
+    // Test distance calculation
+    float64 dist = distance(0.0, 0.0, 3.0, 4.0);
+    std::io::print("Distance squared (3,4): ");
+    std::io::print(std::string8::from_float(dist));
+    std::io::print("\n");
+
+    // Test average
+    float64 avg = average(10.0, 20.0);
+    std::io::print("Average(10, 20): ");
+    std::io::print(std::string8::from_float(avg));
+    std::io::print("\n");
+
+    // Test comparison
+    bool8 pos = is_positive(3.14);
+    std::io::print("Is 3.14 positive? ");
+    if (pos) then
+    {
+        std::io::println("yes");
+    }
+    else
+    {
+        std::io::println("no");
+    }
+
+    return 0;
+}

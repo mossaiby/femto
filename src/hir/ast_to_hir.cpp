@@ -1,4 +1,7 @@
 #include "ast_to_hir.h"
+#include "sema/type_resolver.h"
+
+#include <unordered_map>
 
 namespace femto::hir {
 
@@ -7,6 +10,24 @@ ASTToHIR::ASTToHIR(DiagnosticEngine& diag) : diag_(diag) {}
 HIRModule ASTToHIR::lower(ast::Module& mod) {
     HIRModule hir;
     hir.filename = mod.filename;
+
+    // Build function return type lookup table from AST declarations
+    for (auto& decl : mod.decls) {
+        if (!decl) continue;
+        if (auto* func = std::get_if<ast::FunctionDecl>(&decl->data)) {
+            auto ret_type = func->return_type ? femto::sema::resolve_ast_type(*func->return_type) : nullptr;
+            func_return_types_[func->name] = ret_type;
+        } else if (auto* ns = std::get_if<ast::NamespaceDecl>(&decl->data)) {
+            for (auto& ns_decl : ns->decls) {
+                if (!ns_decl) continue;
+                if (auto* func = std::get_if<ast::FunctionDecl>(&ns_decl->data)) {
+                    auto ret_type = func->return_type ? femto::sema::resolve_ast_type(*func->return_type) : nullptr;
+                    func_return_types_[ns->name + "." + func->name] = ret_type;
+                }
+            }
+        }
+    }
+
     for (auto& decl : mod.decls) {
         if (decl) {
             auto hd = lower_decl(*decl);
@@ -48,9 +69,11 @@ HIRFunction ASTToHIR::lower_function(ast::FunctionDecl& func) {
     HIRFunction h;
     h.name = func.name;
     h.is_error_return = func.is_error_return;
-    // Type info comes from sema; for now store param names
+    // Type info comes from sema; resolve AST types to sema types
+    h.return_type = func.return_type ? femto::sema::resolve_ast_type(*func.return_type) : nullptr;
     for (auto& p : func.params) {
-        h.params.push_back({p.name, nullptr});
+        auto param_type = p.type ? femto::sema::resolve_ast_type(*p.type) : nullptr;
+        h.params.push_back({p.name, param_type});
     }
     if (func.body) {
         h.body = lower_block(std::get<ast::Block>(func.body->data));
@@ -156,6 +179,17 @@ StmtPtr ASTToHIR::lower_stmt(ast::Stmt& stmt) {
             auto cond = lower_expr(*s.condition);
             auto body = lower_block(std::get<ast::Block>(s.body->data));
             hs->data = WhileStmt{std::move(cond), std::move(body)};
+        } else if constexpr (std::is_same_v<T, ast::DeclPtr>) {
+            if (s) {
+                auto* var_decl = std::get_if<ast::VariableDecl>(&s->data);
+                if (var_decl && var_decl->init) {
+                    hs->data = AssignStmt{var_decl->name, lower_expr(*var_decl->init)};
+                } else {
+                    return nullptr;
+                }
+            } else {
+                return nullptr;
+            }
         } else if constexpr (std::is_same_v<T, ast::Block>) {
             auto blk = std::make_unique<HIRBlock>();
             for (auto& st : s.stmts) {
@@ -179,13 +213,13 @@ ExprPtr ASTToHIR::lower_expr(ast::Expr& expr) {
         he->span = expr.span;
 
         if constexpr (std::is_same_v<T, ast::IntegerLit>) {
-            he->data = IntLit{e.value, nullptr};
+            he->data = IntLit{e.value, femto::sema::make_int(64)};
         } else if constexpr (std::is_same_v<T, ast::FloatLit>) {
-            he->data = FloatLit{e.value, nullptr};
+            he->data = FloatLit{e.value, femto::sema::make_float(64)};
         } else if constexpr (std::is_same_v<T, ast::StringLit>) {
-            he->data = StringLit{e.value, nullptr};
+            he->data = StringLit{e.value, femto::sema::make_string(8)};
         } else if constexpr (std::is_same_v<T, ast::BoolLit>) {
-            he->data = BoolLit{e.value, nullptr};
+            he->data = BoolLit{e.value, femto::sema::make_bool(8)};
         } else if constexpr (std::is_same_v<T, ast::NullLit>) {
             he->data = NullLit{nullptr};
         } else if constexpr (std::is_same_v<T, ast::Identifier>) {
@@ -257,7 +291,13 @@ ExprPtr ASTToHIR::lower_expr(ast::Expr& expr) {
             }
             std::vector<ExprPtr> args;
             for (auto& a : e.args) args.push_back(lower_expr(*a));
-            he->data = CallOp{callee_name, std::move(args), nullptr};
+            // Look up return type from function declarations
+            femto::sema::TypePtr ret_type = nullptr;
+            auto it = func_return_types_.find(callee_name);
+            if (it != func_return_types_.end()) {
+                ret_type = it->second;
+            }
+            he->data = CallOp{callee_name, std::move(args), ret_type};
         } else if constexpr (std::is_same_v<T, ast::CastExpr>) {
             he->data = CastOp{lower_expr(*e.value), nullptr};
         } else if constexpr (std::is_same_v<T, ast::MemberExpr>) {

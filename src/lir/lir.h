@@ -45,9 +45,12 @@ struct LIRInstruction {
     VirtualReg src1;
     VirtualReg src2;
     TypePtr type;
-    std::string label;     // for labels and jumps
-    std::int64_t imm = 0;  // for immediate values
-    bool has_imm = false;  // distinguishes imm=0 from "no immediate"
+    std::string label;          // for labels and jumps
+    std::string var_name;       // variable name for Move/Store targets
+    std::int64_t imm = 0;      // for integer immediate values
+    bool has_imm = false;      // distinguishes imm=0 from "no immediate"
+    double float_imm = 0.0;    // for float immediate values
+    bool has_float_imm = false; // true when float_imm is valid
 };
 
 struct LIRBasicBlock {

@@ -32,6 +32,12 @@ private:
               TypePtr type = nullptr, const std::string& label = "", std::int64_t imm = 0,
               bool has_imm = false);
 
+    void emit_with_var(LIRBasicBlock& block, LIROpcode::Enum op, VirtualReg dest,
+                       VirtualReg src1, VirtualReg src2, TypePtr type,
+                       const std::string& var_name);
+
+    void emit_float_move(LIRBasicBlock& block, VirtualReg dest, double value, TypePtr type);
+
     // Map HIR BinaryOp to LIR opcode
     static LIROpcode::Enum map_binary_op(hir::BinaryOp::Op op);
 };

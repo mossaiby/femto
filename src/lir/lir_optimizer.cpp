@@ -38,6 +38,9 @@ void LIROptimizer::dead_code_elimination(LIRFunction& func) {
                 inst.opcode == LIROpcode::Nop ||
                 inst.opcode == LIROpcode::Phi) {
                 kept.push_back(std::move(inst));
+            } else if (!inst.var_name.empty()) {
+                // Move with variable name - keep it (variable assignment)
+                kept.push_back(std::move(inst));
             } else if (inst.dest.id != 0 && used_regs.count(inst.dest.id) == 0) {
                 // Dead code - skip it
             } else {
@@ -51,10 +54,6 @@ void LIROptimizer::dead_code_elimination(LIRFunction& func) {
 void LIROptimizer::peephole_optimize(LIRBasicBlock& block) {
     std::vector<LIRInstruction> optimized;
     for (auto& inst : block.instructions) {
-        // Fold constant moves: Move dest, imm -> just store the imm
-        if (inst.opcode == LIROpcode::Move && inst.imm != 0) {
-            inst.opcode = LIROpcode::Nop;
-        }
         // Skip nops
         if (inst.opcode == LIROpcode::Nop) continue;
         optimized.push_back(std::move(inst));

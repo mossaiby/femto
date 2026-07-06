@@ -35,6 +35,9 @@ void HIRToLIR::lower_function(hir::HIRFunction& func, LIRModule& mod) {
         lir_func.params.push_back({name, type});
     }
 
+    // Expressions start after parameter register IDs to avoid stack slot collisions
+    lir_func.next_reg = static_cast<std::uint32_t>(func.params.size());
+
     if (func.body) {
         LIRBasicBlock entry_block;
         entry_block.label = "";
@@ -65,7 +68,7 @@ void HIRToLIR::lower_stmt(hir::HIRStmt& stmt, LIRFunction& lir_func, LIRBasicBlo
             auto val_reg = lower_expr(*s.value, lir_func, current_block);
             // Allocate a virtual register for the target variable
             VirtualReg target{lir_func.next_reg++, val_reg.type};
-            emit(current_block, LIROpcode::Move, target, val_reg, {0, nullptr}, val_reg.type);
+            emit_with_var(current_block, LIROpcode::Move, target, val_reg, {0, nullptr}, val_reg.type, s.target_name);
         } else if constexpr (std::is_same_v<T, hir::ExprStmt>) {
             lower_expr(*s.expr, lir_func, current_block);
         } else if constexpr (std::is_same_v<T, hir::ReturnStmt>) {
@@ -153,10 +156,8 @@ VirtualReg HIRToLIR::lower_expr(hir::HIRExpr& expr, LIRFunction& lir_func, LIRBa
             emit(current_block, LIROpcode::Move, dest, {0, nullptr}, {0, nullptr}, e.type, "", e.value, true);
             return dest;
         } else if constexpr (std::is_same_v<T, hir::FloatLit>) {
-            // Floats not fully supported in LIR yet; treat as int bit-pattern
             VirtualReg dest{lir_func.next_reg++, e.type};
-            emit(current_block, LIROpcode::Move, dest, {0, nullptr}, {0, nullptr}, e.type, "",
-                 static_cast<std::int64_t>(*reinterpret_cast<const std::int64_t*>(&e.value)), true);
+            emit_float_move(current_block, dest, e.value, e.type);
             return dest;
         } else if constexpr (std::is_same_v<T, hir::BoolLit>) {
             VirtualReg dest{lir_func.next_reg++, e.type};
@@ -182,9 +183,13 @@ VirtualReg HIRToLIR::lower_expr(hir::HIRExpr& expr, LIRFunction& lir_func, LIRBa
         } else if constexpr (std::is_same_v<T, hir::BinaryOp>) {
             auto left = lower_expr(*e.left, lir_func, current_block);
             auto right = lower_expr(*e.right, lir_func, current_block);
-            VirtualReg dest{lir_func.next_reg++, e.type};
+            // Infer result type from operands: if either is float, result is float
+            lir::TypePtr result_type = e.type;
+            if (!result_type && left.type) result_type = left.type;
+            if (!result_type && right.type) result_type = right.type;
+            VirtualReg dest{lir_func.next_reg++, result_type};
             auto opcode = map_binary_op(e.op);
-            emit(current_block, opcode, dest, left, right, e.type);
+            emit(current_block, opcode, dest, left, right, result_type);
             return dest;
         } else if constexpr (std::is_same_v<T, hir::UnaryOp>) {
             auto operand = lower_expr(*e.operand, lir_func, current_block);
@@ -252,6 +257,19 @@ void HIRToLIR::emit(LIRBasicBlock& block, LIROpcode::Enum op, VirtualReg dest,
     block.instructions.push_back(std::move(inst));
 }
 
+void HIRToLIR::emit_with_var(LIRBasicBlock& block, LIROpcode::Enum op, VirtualReg dest,
+                              VirtualReg src1, VirtualReg src2, TypePtr type,
+                              const std::string& var_name) {
+    LIRInstruction inst;
+    inst.opcode = op;
+    inst.dest = dest;
+    inst.src1 = src1;
+    inst.src2 = src2;
+    inst.type = type;
+    inst.var_name = var_name;
+    block.instructions.push_back(std::move(inst));
+}
+
 LIROpcode::Enum HIRToLIR::map_binary_op(hir::BinaryOp::Op op) {
     switch (op) {
         case hir::BinaryOp::Add:      return LIROpcode::Add;
@@ -274,6 +292,18 @@ LIROpcode::Enum HIRToLIR::map_binary_op(hir::BinaryOp::Op op) {
         case hir::BinaryOp::LogicOr:  return LIROpcode::LogicOr;
     }
     return LIROpcode::Nop;
+}
+
+void HIRToLIR::emit_float_move(LIRBasicBlock& block, VirtualReg dest, double value, TypePtr type) {
+    LIRInstruction inst;
+    inst.opcode = LIROpcode::Move;
+    inst.dest = dest;
+    inst.src1 = {0, nullptr};
+    inst.src2 = {0, nullptr};
+    inst.type = type;
+    inst.float_imm = value;
+    inst.has_float_imm = true;
+    block.instructions.push_back(std::move(inst));
 }
 
 } // namespace femto::lir

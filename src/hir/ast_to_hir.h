@@ -15,6 +15,7 @@ public:
 
 private:
     DiagnosticEngine& diag_;
+    std::unordered_map<std::string, femto::sema::TypePtr> func_return_types_;
 
     DeclPtr lower_decl(ast::Decl& decl);
     HIRFunction lower_function(ast::FunctionDecl& func);

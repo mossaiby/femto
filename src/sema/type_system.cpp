@@ -1,6 +1,8 @@
 #include "type_system.h"
+#include "parser/ast.h"
 
 #include <sstream>
+#include <variant>
 
 namespace femto::sema {
 
@@ -113,6 +115,74 @@ std::string type_to_string(const Type& t) {
         }
     }
     return "<unknown>";
+}
+
+TypePtr resolve_ast_type(const ast::TypeNode& node) {
+    return std::visit([](const auto& t) -> TypePtr {
+        using T = std::decay_t<decltype(t)>;
+        if constexpr (std::is_same_v<T, ast::PrimitiveType>) {
+            switch (t.token_type) {
+                case TokenType::TY_int8: return make_int(8);
+                case TokenType::TY_int16: return make_int(16);
+                case TokenType::TY_int32: return make_int(32);
+                case TokenType::TY_int64: return make_int(64);
+                case TokenType::TY_int128: return make_int(128);
+                case TokenType::TY_int256: return make_int(256);
+                case TokenType::TY_int512: return make_int(512);
+                case TokenType::TY_uint8: return make_uint(8);
+                case TokenType::TY_uint16: return make_uint(16);
+                case TokenType::TY_uint32: return make_uint(32);
+                case TokenType::TY_uint64: return make_uint(64);
+                case TokenType::TY_uint128: return make_uint(128);
+                case TokenType::TY_uint256: return make_uint(256);
+                case TokenType::TY_uint512: return make_uint(512);
+                case TokenType::TY_float16: return make_float(16);
+                case TokenType::TY_float32: return make_float(32);
+                case TokenType::TY_float64: return make_float(64);
+                case TokenType::TY_float128: return make_float(128);
+                case TokenType::TY_bool8: return make_bool(8);
+                case TokenType::TY_bool16: return make_bool(16);
+                case TokenType::TY_bool32: return make_bool(32);
+                case TokenType::TY_bool64: return make_bool(64);
+                case TokenType::TY_bool128: return make_bool(128);
+                case TokenType::TY_bool256: return make_bool(256);
+                case TokenType::TY_bool512: return make_bool(512);
+                case TokenType::TY_char8: return make_char(8);
+                case TokenType::TY_char16: return make_char(16);
+                case TokenType::TY_char32: return make_char(32);
+                case TokenType::TY_string8: return make_string(8);
+                case TokenType::TY_string16: return make_string(16);
+                case TokenType::TY_string32: return make_string(32);
+                case TokenType::KW_void: return make_void();
+                default: return make_error();
+            }
+        } else if constexpr (std::is_same_v<T, ast::PointerType>) {
+            return make_pointer(resolve_ast_type(*t.inner));
+        } else if constexpr (std::is_same_v<T, ast::SliceType>) {
+            return make_slice(resolve_ast_type(*t.inner));
+        } else if constexpr (std::is_same_v<T, ast::ArrayType>) {
+            uint64_t size = 0;
+            if (t.size) {
+                if (auto* lit = std::get_if<ast::IntegerLit>(&t.size->data)) {
+                    size = static_cast<uint64_t>(lit->value);
+                }
+            }
+            return make_array(resolve_ast_type(*t.inner), size);
+        } else if constexpr (std::is_same_v<T, ast::FunctionType>) {
+            std::vector<TypePtr> params;
+            for (auto& pt : t.param_types) {
+                params.push_back(resolve_ast_type(*pt));
+            }
+            TypePtr ret = t.return_type ? resolve_ast_type(*t.return_type) : make_void();
+            return make_function(std::move(params), ret, t.is_error_return);
+        } else if constexpr (std::is_same_v<T, ast::NamedType>) {
+            return make_named(t.name);
+        } else if constexpr (std::is_same_v<T, ast::GenericType>) {
+            return make_generic(t.name);
+        } else {
+            return make_error();
+        }
+    }, node.data);
 }
 
 } // namespace femto::sema

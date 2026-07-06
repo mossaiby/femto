@@ -227,14 +227,21 @@ int main(int argc, char* argv[]) {
     if (opts.emit_lir) {
         std::fprintf(stderr, "=== LIR ===\n");
         for (auto& func : lir.functions) {
-            std::fprintf(stderr, "  func %s (%zu blocks)\n", func.name.c_str(), func.blocks.size());
+            std::fprintf(stderr, "  func %s (ret_type=%s, %zu blocks)\n", func.name.c_str(),
+                func.return_type ? femto::sema::type_to_string(*func.return_type).c_str() : "null",
+                func.blocks.size());
             for (auto& block : func.blocks) {
                 if (!block.label.empty()) {
                     std::fprintf(stderr, "    %s:\n", block.label.c_str());
                 }
                 for (auto& inst : block.instructions) {
-                    std::fprintf(stderr, "      op=%d dest=r%d src1=r%d src2=r%d\n",
+                    std::fprintf(stderr, "      op=%d dest=r%d src1=r%d src2=r%d",
                         static_cast<int>(inst.opcode), inst.dest.id, inst.src1.id, inst.src2.id);
+                    if (!inst.label.empty()) std::fprintf(stderr, " label=%s", inst.label.c_str());
+                    if (!inst.var_name.empty()) std::fprintf(stderr, " var=%s", inst.var_name.c_str());
+                    if (inst.has_imm) std::fprintf(stderr, " imm=%ld", inst.imm);
+                    if (inst.has_float_imm) std::fprintf(stderr, " fimm=%f", inst.float_imm);
+                    std::fprintf(stderr, "\n");
                 }
             }
         }
