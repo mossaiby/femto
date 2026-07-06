@@ -92,9 +92,12 @@ private:
     bool is_builtin_type_token() const;
     bool is_type_start() const;
     bool check_type() const;
+    bool check_generic_type_start() const;
 
     // ?? branch arm: (type name) { body }
     ast::ExprPtr parse_branch_arm();
+
+    bool no_postfix_struct_ = false;
 };
 
 } // namespace femto

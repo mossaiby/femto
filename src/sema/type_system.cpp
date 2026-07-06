@@ -71,6 +71,13 @@ bool is_assignable(const Type& from, const Type& to) {
     if (is_floating(from) && is_floating(to)) return true;
     // Pointer null coercion: null pointer to any pointer
     if (from.kind == TypeKind::Pointer && to.kind == TypeKind::Pointer) return true;
+    // Array/Slice target: check element type compatibility
+    if (to.kind == TypeKind::Slice) {
+        return is_assignable(from, *std::get<SliceType>(to.data).inner);
+    }
+    if (to.kind == TypeKind::Array) {
+        return is_assignable(from, *std::get<ArrayType>(to.data).inner);
+    }
     return false;
 }
 

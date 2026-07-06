@@ -8,6 +8,7 @@
 #include "common/diagnostic.h"
 #include "lexer/lexer.h"
 #include "parser/parser.h"
+#include "parser/ast_dump.h"
 #include "sema/type_checker.h"
 #include "hir/ast_to_hir.h"
 #include "hir/hir_optimizer.h"
@@ -63,9 +64,22 @@ ExampleResult compile_example(const std::string& path) {
 
     // Type check
     femto::sema::TypeChecker checker(diag);
-    bool ok = checker.check(mod);
+    bool ok = false;
+    try {
+        ok = checker.check(mod);
+    } catch (const std::exception& e) {
+        result.error = std::string("type_check exception: ") + e.what();
+        diag.print_all();
+        return result;
+    }
 
     if (diag.has_errors()) {
+        std::ofstream errlog("/tmp/structs_errors.log");
+        for (auto& d : diag.diagnostics()) {
+            errlog << result.filename << ":" << d.location.line << ":"
+                   << d.location.column << ": error: " << d.message << std::endl;
+        }
+        errlog.close();
         result.error = "type errors";
         return result;
     }
@@ -73,13 +87,19 @@ ExampleResult compile_example(const std::string& path) {
 
     // Lower to HIR
     femto::hir::ASTToHIR lowerer(diag);
-    auto hir = lowerer.lower(mod);
-    result.lowered_to_hir = true;
+    try {
+        auto hir = lowerer.lower(mod);
+        result.lowered_to_hir = true;
 
-    // Optimize HIR
-    femto::hir::HIROptimizer optimizer;
-    optimizer.optimize(hir);
-    result.optimized = true;
+        // Optimize HIR
+        femto::hir::HIROptimizer optimizer;
+        optimizer.optimize(hir);
+        result.optimized = true;
+    } catch (const std::exception& e) {
+        result.error = std::string("hir exception: ") + e.what();
+        diag.print_all();
+        return result;
+    }
 
     return result;
 }
@@ -92,8 +112,8 @@ TEST_P(ExamplesTest, CompilesSuccessfully) {
     auto result = compile_example(GetParam());
     EXPECT_TRUE(result.parsed) << result.filename << ": parse failed - " << result.error;
     EXPECT_TRUE(result.type_checked) << result.filename << ": type check failed - " << result.error;
-    EXPECT_TRUE(result.lowered_to_hir) << result.filename << ": HIR lowering failed";
-    EXPECT_TRUE(result.optimized) << result.filename << ": optimization failed";
+    EXPECT_TRUE(result.lowered_to_hir) << result.filename << ": HIR lowering failed - " << result.error;
+    EXPECT_TRUE(result.optimized) << result.filename << ": optimization failed - " << result.error;
 }
 
 // List all example files

@@ -68,6 +68,18 @@ private:
     TypePtr resolve_call(const std::string& name, const std::vector<TypePtr>& arg_types, ast::CallExpr& expr);
     bool match_overload(const FunctionSignature& sig, const std::vector<TypePtr>& arg_types);
 
+    // Struct literal checking
+    TypePtr check_struct_literal(ast::StructLiteral& lit, const std::string& expected_name = "",
+                                 const std::vector<TypePtr>& generic_args = {});
+
+    // Struct/enum/function declaration storage for field/member access
+    std::unordered_map<std::string, ast::StructDecl*> struct_decls_;
+    std::unordered_map<std::string, ast::EnumDecl*> enum_decls_;
+    std::unordered_map<std::string, ast::FunctionDecl*> func_decls_;
+
+    // Substitute generic type parameters in a type
+    TypePtr substitute_type(TypePtr type, const std::unordered_map<std::string, TypePtr>& generic_map);
+
     // Current function context
     const FunctionSignature* current_func_ = nullptr;
     TypePtr current_return_type_;

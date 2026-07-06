@@ -5,6 +5,7 @@ add_executable(femto
   lexer/token.cpp
   lexer/lexer.cpp
   parser/parser.cpp
+  parser/ast_dump.cpp
   sema/type_system.cpp
   sema/symbol_table.cpp
   sema/type_checker.cpp
@@ -23,6 +24,7 @@ add_executable(femto_tests
   lexer/token.cpp
   lexer/lexer.cpp
   parser/parser.cpp
+  parser/ast_dump.cpp
   sema/type_system.cpp
   sema/symbol_table.cpp
   sema/type_checker.cpp

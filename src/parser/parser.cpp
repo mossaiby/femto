@@ -16,8 +16,10 @@ Parser::Parser(const std::vector<Token>& tokens, DiagnosticEngine& diag)
 ast::Module Parser::parse() {
     ast::Module mod;
     while (!is_at_end()) {
+        std::size_t before = pos_;
         auto decl = parse_decl();
         if (decl) mod.decls.push_back(std::move(decl));
+        if (pos_ == before) advance(); // prevent infinite loop
     }
     return mod;
 }
@@ -65,8 +67,23 @@ std::string Parser::parse_name() {
 bool Parser::is_builtin_type_token() const { return is_builtin_type(peek().type); }
 bool Parser::is_type_start() const { return is_builtin_type_token() || check(TokenType::KW_void); }
 bool Parser::check_type() const {
-    return is_type_start() ||
+    return is_type_start() || check_generic_type_start() ||
            (check(TokenType::Identifier) && peek_next().type == TokenType::Identifier);
+}
+bool Parser::check_generic_type_start() const {
+    if (!check(TokenType::Identifier)) return false;
+    if (peek_next().type != TokenType::Lt) return false;
+    // Scan ahead: Identifier < ... > Identifier
+    std::size_t scan = pos_ + 2;
+    int depth = 1;
+    while (scan < tokens_.size() && depth > 0) {
+        auto tt = tokens_[scan].type;
+        if (tt == TokenType::Lt) depth++;
+        else if (tt == TokenType::Gt) depth--;
+        scan++;
+    }
+    // After matching >, expect Identifier
+    return scan < tokens_.size() && tokens_[scan].type == TokenType::Identifier;
 }
 
 // ---- Top-level declarations ----
@@ -145,7 +162,7 @@ DeclPtr Parser::parse_decl() {
     }
 
     // variable declaration: type name [= expr];
-    if (is_type_start()) {
+    if (is_type_start() || check_type()) {
         auto d = parse_variable_decl();
         d->is_exported = exported;
         return d;
@@ -699,11 +716,8 @@ ExprPtr Parser::parse_unary() {
         auto e = std::make_unique<ast::Expr>(); e->span = span;
         e->data = ast::UnaryExpr{ast::UnaryExpr::PreDec, std::move(op)}; return e;
     }
-    // Cast: Type(expr) or Type!(expr)
-    if ((check(TokenType::Identifier) || is_builtin_type_token()) && peek_next().type == TokenType::LParen) {
-        // Peek ahead to check if this is a cast: "identifier(" could be a function call
-        // Only treat as cast if the identifier is a known type name
-        auto saved = pos_;
+    // Cast: Type(expr) or Type!(expr) - only for builtin types, not user-defined identifiers
+    if (is_builtin_type_token() && peek_next().type == TokenType::LParen) {
         auto type = parse_type();
         if (type && match(TokenType::LParen)) {
             auto value = parse_expr();
@@ -712,7 +726,9 @@ ExprPtr Parser::parse_unary() {
             ast::CastExpr cast{std::move(type), std::move(value), false};
             e->data = std::move(cast); return e;
         }
-        pos_ = saved;
+        // If we got here, it wasn't a valid cast, restore position
+        // (parse_type would have advanced, so we can't easily restore)
+        // But builtin types followed by ( should always be casts
     }
     if (match(TokenType::KW_success)) {
         expect(TokenType::LParen, "'('");
@@ -805,27 +821,34 @@ ExprPtr Parser::parse_postfix() {
                 b->data = ast::ResultBranchExpr{std::move(expr), std::move(on_success), std::move(on_failure)};
                 expr = std::move(b);
             }
-        } else if (check(TokenType::Lt) && std::holds_alternative<ast::Identifier>(expr->data)) {
+        } else if (check(TokenType::Lt) && (std::holds_alternative<ast::Identifier>(expr->data) || std::holds_alternative<ast::MemberExpr>(expr->data))) {
             // Speculative lookahead: distinguish generic<T> from comparison < expr
             std::size_t saved = pos_;
             advance(); // past '<'
             bool looks_generic = false;
             std::size_t scan = pos_;
             int depth = 1;
+            int paren_depth = 0;
             while (scan < tokens_.size() && depth > 0) {
                 auto tt = tokens_[scan].type;
-                if (tt == TokenType::Lt) depth++;
-                else if (tt == TokenType::Gt) depth--;
-                else if (tt == TokenType::Semicolon || tt == TokenType::LBrace ||
-                         tt == TokenType::RBrace || tt == TokenType::Eq ||
-                         tt == TokenType::Plus || tt == TokenType::Minus ||
-                         tt == TokenType::Star || tt == TokenType::Slash ||
-                         tt == TokenType::Percent || tt == TokenType::Amp ||
-                         tt == TokenType::Pipe || tt == TokenType::Caret ||
-                         tt == TokenType::RParen || tt == TokenType::Comma ||
-                         tt == TokenType::EqEq || tt == TokenType::Neq ||
-                         tt == TokenType::Le || tt == TokenType::Ge) {
-                    break;
+                if (tt == TokenType::LParen) paren_depth++;
+                else if (tt == TokenType::RParen) {
+                    if (paren_depth == 0) break;
+                    paren_depth--;
+                }
+                if (paren_depth == 0) {
+                    if (tt == TokenType::Lt) depth++;
+                    else if (tt == TokenType::Gt) depth--;
+                    else if (tt == TokenType::Semicolon || tt == TokenType::LBrace ||
+                             tt == TokenType::RBrace || tt == TokenType::Eq ||
+                             tt == TokenType::Plus || tt == TokenType::Minus ||
+                             tt == TokenType::Star || tt == TokenType::Slash ||
+                             tt == TokenType::Percent ||
+                             tt == TokenType::EqEq || tt == TokenType::Neq ||
+                             tt == TokenType::Le || tt == TokenType::Ge ||
+                             tt == TokenType::AmpAmp || tt == TokenType::PipePipe) {
+                        break;
+                    }
                 }
                 scan++;
             }
@@ -837,17 +860,34 @@ ExprPtr Parser::parse_postfix() {
                 std::vector<TypePtr> type_args;
                 while (!is_at_end() && !check(TokenType::Gt)) { type_args.push_back(parse_type()); match(TokenType::Comma); }
                 expect(TokenType::Gt, "'>'");
-                if (check(TokenType::LParen)) {
-                    advance();
-                    std::vector<ExprPtr> args;
-                    while (!is_at_end() && !check(TokenType::RParen)) { args.push_back(parse_expr()); match(TokenType::Comma); }
-                    expect(TokenType::RParen, "')'");
-                }
                 auto g = std::make_unique<ast::Expr>(); g->span = expr->span;
                 g->data = ast::GenericCallExpr{std::move(expr), std::move(type_args)}; expr = std::move(g);
             } else {
                 break; // '<' is a comparison operator
             }
+        } else if (!no_postfix_struct_ && check(TokenType::LBrace) &&
+                   (std::holds_alternative<ast::Identifier>(expr->data) ||
+                    std::holds_alternative<ast::MemberExpr>(expr->data) ||
+                    std::holds_alternative<ast::GenericCallExpr>(expr->data)) &&
+                   match(TokenType::LBrace)) {
+            // Struct initializer after type expression
+            std::vector<std::pair<std::string, ExprPtr>> fields;
+            while (!is_at_end() && !check(TokenType::RBrace)) {
+                if (match(TokenType::Dot)) {
+                    auto name = parse_name();
+                    expect(TokenType::Eq, "'='");
+                    auto value = parse_expr();
+                    fields.push_back({name, std::move(value)});
+                    match(TokenType::Comma);
+                } else {
+                    auto value = parse_expr();
+                    fields.push_back({"", std::move(value)});
+                    match(TokenType::Comma);
+                }
+            }
+            expect(TokenType::RBrace, "'}'");
+            auto s = std::make_unique<ast::Expr>(); s->span = expr->span;
+            s->data = ast::StructLiteral{std::move(expr), std::move(fields)}; expr = std::move(s);
         } else break;
     }
     return expr;
@@ -944,6 +984,26 @@ ExprPtr Parser::parse_primary() {
         auto e = std::make_unique<ast::Expr>(); e->span = span;
         e->data = ast::ArrayLiteral{std::move(elements)}; return e;
     }
+    if (match(TokenType::LBrace)) {
+        // Struct/aggregate initializer
+        std::vector<std::pair<std::string, ExprPtr>> fields;
+        while (!is_at_end() && !check(TokenType::RBrace)) {
+            if (match(TokenType::Dot)) {
+                auto name = parse_name();
+                expect(TokenType::Eq, "'='");
+                auto value = parse_expr();
+                fields.push_back({name, std::move(value)});
+                match(TokenType::Comma);
+            } else {
+                auto value = parse_expr();
+                fields.push_back({"", std::move(value)});
+                match(TokenType::Comma);
+            }
+        }
+        expect(TokenType::RBrace, "'}'");
+        auto e = std::make_unique<ast::Expr>(); e->span = span;
+        e->data = ast::StructLiteral{nullptr, std::move(fields)}; return e;
+    }
     error("unexpected token '" + peek().lexeme + "'");
     auto e = std::make_unique<ast::Expr>(); e->span = span;
     e->data = ast::NullLit{}; return e;
@@ -963,9 +1023,11 @@ StmtPtr Parser::parse_stmt() {
     if (check(TokenType::KW_break)) return parse_break_stmt();
     if (check(TokenType::KW_continue)) return parse_continue_stmt();
 
-    // Variable declaration: type name [= expr];
-    if (is_type_start()) {
+    // Variable declaration: type name [= expr] or Type<...> name [= expr];
+    if (is_type_start() || check_type()) {
+        std::size_t before = pos_;
         auto type = parse_type();
+        if (pos_ == before) { advance(); return nullptr; } // prevent infinite loop
         auto name = parse_name();
         ExprPtr init;
         if (match(TokenType::Eq)) init = parse_expr();
@@ -979,7 +1041,9 @@ StmtPtr Parser::parse_stmt() {
     }
 
     // Expression statement (with optional assignment)
+    std::size_t before = pos_;
     auto expr = parse_expr();
+    if (pos_ == before) { advance(); return nullptr; } // prevent infinite loop
     if (match(TokenType::Eq)) {
         auto value = parse_expr();
         match(TokenType::Semicolon);
@@ -995,7 +1059,12 @@ StmtPtr Parser::parse_block() {
     auto span = peek().span;
     expect(TokenType::LBrace, "'{'");
     Block block;
-    while (!is_at_end() && !check(TokenType::RBrace)) block.stmts.push_back(parse_stmt());
+    while (!is_at_end() && !check(TokenType::RBrace)) {
+        std::size_t before = pos_;
+        auto stmt = parse_stmt();
+        if (stmt) block.stmts.push_back(std::move(stmt));
+        if (pos_ == before) advance(); // prevent infinite loop
+    }
     expect(TokenType::RBrace, "'}'");
     auto s = std::make_unique<ast::Stmt>(); s->span = span;
     s->data = std::move(block); return s;
@@ -1083,6 +1152,7 @@ StmtPtr Parser::parse_do_while_stmt() {
 StmtPtr Parser::parse_switch_stmt() {
     auto span = peek().span;
     advance();
+    no_postfix_struct_ = true;
     auto subject = parse_expr();
     expect(TokenType::LBrace, "'{'");
     std::vector<ast::CaseArm> cases;
@@ -1097,6 +1167,7 @@ StmtPtr Parser::parse_switch_stmt() {
         } else { error("expected 'case' or 'default'"); advance(); }
     }
     expect(TokenType::RBrace, "'}'");
+    no_postfix_struct_ = false;
     auto s = std::make_unique<ast::Stmt>(); s->span = span;
     s->data = ast::SwitchStmt{std::move(subject), std::move(cases), std::move(default_case)};
     return s;
@@ -1111,7 +1182,9 @@ StmtPtr Parser::parse_match_stmt() {
     expect(TokenType::LBrace, "'{'");
     std::vector<ast::MatchArm> arms;
     while (!is_at_end() && !check(TokenType::RBrace)) {
+        no_postfix_struct_ = true;
         auto cond = parse_expr();
+        no_postfix_struct_ = false;
         expect(TokenType::LBrace, "'{'");
         auto value = parse_expr();
         expect(TokenType::RBrace, "'}'");

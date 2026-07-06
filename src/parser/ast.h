@@ -184,7 +184,7 @@ struct ArrayLiteral {
 };
 
 struct StructLiteral {
-    std::string type_name;
+    ExprPtr type_expr;  // nullptr for anonymous struct literal
     std::vector<std::pair<std::string, ExprPtr>> fields;
 };
 
