@@ -17,15 +17,19 @@ private:
     std::ostringstream out_;
     int string_counter_ = 0;
     std::unordered_map<std::string, std::string> string_labels_;
+    std::vector<std::pair<std::string, std::string>> string_data_; // label -> value
 
     void emit_prologue(lir::LIRFunction& func);
     void emit_epilogue(lir::LIRFunction& func);
     void emit_instruction(lir::LIRInstruction& inst, lir::LIRFunction& func);
     void emit_function(lir::LIRFunction& func);
     void emit_data_section(lir::LIRModule& mod);
+    void emit_runtime_stubs();
+    void emit_entry_point();
 
     std::string reg_name(lir::VirtualReg reg);
     std::string new_string_label(const std::string& value);
+    std::string get_or_create_string_label(const std::string& value);
 
     // Register allocation (simple linear scan)
     std::unordered_map<lir::RegId, std::string> reg_map_;

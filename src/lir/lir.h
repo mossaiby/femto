@@ -46,7 +46,8 @@ struct LIRInstruction {
     VirtualReg src2;
     TypePtr type;
     std::string label;     // for labels and jumps
-    std::int64_t imm;      // for immediate values
+    std::int64_t imm = 0;  // for immediate values
+    bool has_imm = false;  // distinguishes imm=0 from "no immediate"
 };
 
 struct LIRBasicBlock {
@@ -69,6 +70,7 @@ struct LIRFunction {
 struct LIRModule {
     std::string filename;
     std::vector<LIRFunction> functions;
+    std::vector<std::pair<std::string, std::string>> string_data; // label -> value
 };
 
 } // namespace femto::lir

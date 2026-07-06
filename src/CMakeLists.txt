@@ -11,6 +11,7 @@ add_executable(femto
   sema/type_checker.cpp
   hir/ast_to_hir.cpp
   hir/hir_optimizer.cpp
+  lir/hir_to_lir.cpp
   lir/lir_optimizer.cpp
   codegen/x86_64/x86_64.cpp
 )
@@ -30,6 +31,7 @@ add_executable(femto_tests
   sema/type_checker.cpp
   hir/ast_to_hir.cpp
   hir/hir_optimizer.cpp
+  lir/hir_to_lir.cpp
   lir/lir_optimizer.cpp
   codegen/x86_64/x86_64.cpp
   common/diagnostic.test.cpp

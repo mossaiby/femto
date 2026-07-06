@@ -238,6 +238,22 @@ ExprPtr ASTToHIR::lower_expr(ast::Expr& expr) {
             std::string callee_name;
             if (auto* id = std::get_if<ast::Identifier>(&e.callee->data)) {
                 callee_name = id->name;
+            } else if (auto* me = std::get_if<ast::MemberExpr>(&e.callee->data)) {
+                // Build qualified name: walk the member chain
+                std::string name = me->member;
+                ast::Expr* obj = me->object.get();
+                while (true) {
+                    if (auto* inner_id = std::get_if<ast::Identifier>(&obj->data)) {
+                        name = inner_id->name + "." + name;
+                        break;
+                    } else if (auto* inner_me = std::get_if<ast::MemberExpr>(&obj->data)) {
+                        name = inner_me->member + "." + name;
+                        obj = inner_me->object.get();
+                    } else {
+                        break;
+                    }
+                }
+                callee_name = name;
             }
             std::vector<ExprPtr> args;
             for (auto& a : e.args) args.push_back(lower_expr(*a));
