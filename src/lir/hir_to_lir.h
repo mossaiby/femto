@@ -4,6 +4,8 @@
 #include "hir/hir.h"
 #include "common/diagnostic.h"
 
+#include <unordered_map>
+
 namespace femto::lir {
 
 class HIRToLIR {
@@ -17,6 +19,10 @@ private:
     int label_counter_ = 0;
     int string_counter_ = 0;
     LIRModule* current_mod_ = nullptr;
+
+    // Track variable name -> virtual register ID mapping per function
+    // so that reassignment writes to the same register
+    std::unordered_map<std::string, VirtualReg> var_reg_map_;
 
     std::string new_label(const std::string& prefix);
 

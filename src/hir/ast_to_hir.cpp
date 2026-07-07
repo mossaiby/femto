@@ -1,6 +1,7 @@
 #include "ast_to_hir.h"
 #include "sema/type_resolver.h"
 
+#include <functional>
 #include <unordered_map>
 
 namespace femto::hir {
@@ -144,37 +145,28 @@ StmtPtr ASTToHIR::lower_stmt(ast::Stmt& stmt) {
             if (s.value) val = lower_expr(**s.value);
             hs->data = ReturnStmt{std::move(val)};
         } else if constexpr (std::is_same_v<T, ast::IfStmt>) {
-            auto cond = lower_expr(*s.condition);
-            auto then_blk = lower_block(std::get<ast::Block>(s.then_block->data));
-            std::unique_ptr<HIRBlock> else_blk;
-            if (s.else_block) {
-                // else_block can be either a Block (for final else) or an IfStmt (for else if chains)
-                auto& else_stmt = **s.else_block;
-                if (auto* block = std::get_if<ast::Block>(&else_stmt.data)) {
-                    else_blk = lower_block(*block);
-                } else if (auto* if_stmt = std::get_if<ast::IfStmt>(&else_stmt.data)) {
-                    // Recursively lower the else-if chain
-                    auto else_cond = lower_expr(*if_stmt->condition);
-                    auto else_then = lower_block(std::get<ast::Block>(if_stmt->then_block->data));
-                    std::unique_ptr<HIRBlock> else_else;
-                    if (if_stmt->else_block) {
-                        auto& nested_else = **if_stmt->else_block;
-                        if (auto* nested_block = std::get_if<ast::Block>(&nested_else.data)) {
-                            else_else = lower_block(*nested_block);
-                        } else if (auto* nested_if = std::get_if<ast::IfStmt>(&nested_else.data)) {
-                            // This shouldn't happen with our iterative parser, but handle it
-                            else_else = lower_block(std::get<ast::Block>(nested_if->then_block->data));
-                        }
+            // Use a recursive lambda to handle arbitrarily deep else-if chains
+            std::function<std::unique_ptr<HIRStmt>(ast::IfStmt&, SourceSpan)> lower_if =
+                [&](ast::IfStmt& ifs, SourceSpan span) -> std::unique_ptr<HIRStmt> {
+                auto cond = lower_expr(*ifs.condition);
+                auto then_blk = lower_block(std::get<ast::Block>(ifs.then_block->data));
+                std::unique_ptr<HIRBlock> else_blk;
+                if (ifs.else_block) {
+                    auto& else_stmt = **ifs.else_block;
+                    if (auto* block = std::get_if<ast::Block>(&else_stmt.data)) {
+                        else_blk = lower_block(*block);
+                    } else if (auto* nested_if = std::get_if<ast::IfStmt>(&else_stmt.data)) {
+                        auto nested = lower_if(*nested_if, else_stmt.span);
+                        else_blk = std::make_unique<HIRBlock>();
+                        else_blk->stmts.push_back(std::move(nested));
                     }
-                    // Create a nested IfStmt in HIR
-                    auto nested_if = std::make_unique<HIRStmt>();
-                    nested_if->span = else_stmt.span;
-                    nested_if->data = IfStmt{std::move(else_cond), std::move(else_then), std::move(else_else)};
-                    else_blk = std::make_unique<HIRBlock>();
-                    else_blk->stmts.push_back(std::move(nested_if));
                 }
-            }
-            hs->data = IfStmt{std::move(cond), std::move(then_blk), std::move(else_blk)};
+                auto result = std::make_unique<HIRStmt>();
+                result->span = span;
+                result->data = IfStmt{std::move(cond), std::move(then_blk), std::move(else_blk)};
+                return result;
+            };
+            hs = lower_if(s, stmt.span);
         } else if constexpr (std::is_same_v<T, ast::WhileStmt>) {
             auto cond = lower_expr(*s.condition);
             auto body = lower_block(std::get<ast::Block>(s.body->data));
@@ -288,6 +280,24 @@ ExprPtr ASTToHIR::lower_expr(ast::Expr& expr) {
                     }
                 }
                 callee_name = name;
+            } else if (auto* gc = std::get_if<ast::GenericCallExpr>(&e.callee->data)) {
+                // Generic call: max::<T>(10, 20) - extract inner callee name
+                if (auto* gid = std::get_if<ast::Identifier>(&gc->callee->data)) {
+                    callee_name = gid->name;
+                } else if (auto* gme = std::get_if<ast::MemberExpr>(&gc->callee->data)) {
+                    std::string name = gme->member;
+                    ast::Expr* obj = gme->object.get();
+                    while (true) {
+                        if (auto* inner_id = std::get_if<ast::Identifier>(&obj->data)) {
+                            name = inner_id->name + "." + name;
+                            break;
+                        } else if (auto* inner_me = std::get_if<ast::MemberExpr>(&obj->data)) {
+                            name = inner_me->member + "." + name;
+                            obj = inner_me->object.get();
+                        } else break;
+                    }
+                    callee_name = name;
+                }
             }
             std::vector<ExprPtr> args;
             for (auto& a : e.args) args.push_back(lower_expr(*a));
@@ -310,18 +320,18 @@ ExprPtr ASTToHIR::lower_expr(ast::Expr& expr) {
         } else if constexpr (std::is_same_v<T, ast::SuccessExpr>) {
             std::vector<ExprPtr> args;
             args.push_back(lower_expr(*e.value));
-            CallOp co{"success", std::move(args), nullptr};
+            CallOp co{"__femto_success", std::move(args), nullptr};
             he->data = std::move(co);
         } else if constexpr (std::is_same_v<T, ast::FailureExpr>) {
             std::vector<ExprPtr> args;
             if (e.value) args.push_back(lower_expr(**e.value));
-            he->data = CallOp{"failure", std::move(args), nullptr};
+            he->data = CallOp{"__femto_failure", std::move(args), nullptr};
         } else if constexpr (std::is_same_v<T, ast::StructLiteral>) {
-            // Lower struct literal fields
-            for (auto& [name, val] : e.fields) {
-                lower_expr(*val);
-            }
             he->data = NullLit{nullptr};
+        } else if constexpr (std::is_same_v<T, ast::GenericCallExpr>) {
+            // GenericCallExpr as standalone expression (e.g. Option<T> type ref)
+            auto inner = lower_expr(*e.callee);
+            he->data = std::move(inner->data);
         } else {
             he->data = IntLit{0, nullptr};
         }

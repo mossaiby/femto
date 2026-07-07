@@ -14,6 +14,7 @@ add_executable(femto
   lir/hir_to_lir.cpp
   lir/lir_optimizer.cpp
   codegen/x86_64/x86_64.cpp
+  codegen/c/c.cpp
 )
 
 target_include_directories(femto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -34,6 +35,7 @@ add_executable(femto_tests
   lir/hir_to_lir.cpp
   lir/lir_optimizer.cpp
   codegen/x86_64/x86_64.cpp
+  codegen/c/c.cpp
   common/diagnostic.test.cpp
   lexer/lexer.test.cpp
   parser/parser.test.cpp

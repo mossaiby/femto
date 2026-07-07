@@ -9,9 +9,7 @@ public:
     void optimize(LIRModule& mod);
 
 private:
-    void optimize_function(LIRFunction& func);
-    void optimize_block(LIRBasicBlock& block);
-    void dead_code_elimination(LIRFunction& func);
+    void dead_code_elimination(LIRFunction& func, const LIRModule& mod);
     void peephole_optimize(LIRBasicBlock& block);
 };
 

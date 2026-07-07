@@ -27,6 +27,8 @@ LIRModule HIRToLIR::lower(hir::HIRModule& hir) {
 }
 
 void HIRToLIR::lower_function(hir::HIRFunction& func, LIRModule& mod) {
+    var_reg_map_.clear();
+
     LIRFunction lir_func;
     lir_func.name = func.name;
     lir_func.return_type = func.return_type;
@@ -37,6 +39,11 @@ void HIRToLIR::lower_function(hir::HIRFunction& func, LIRModule& mod) {
 
     // Expressions start after parameter register IDs to avoid stack slot collisions
     lir_func.next_reg = static_cast<std::uint32_t>(func.params.size());
+
+    // Register parameters in the variable map
+    for (std::size_t i = 0; i < func.params.size(); ++i) {
+        var_reg_map_[func.params[i].first] = VirtualReg{static_cast<std::uint32_t>(i), func.params[i].second};
+    }
 
     if (func.body) {
         LIRBasicBlock entry_block;
@@ -66,8 +73,15 @@ void HIRToLIR::lower_stmt(hir::HIRStmt& stmt, LIRFunction& lir_func, LIRBasicBlo
 
         if constexpr (std::is_same_v<T, hir::AssignStmt>) {
             auto val_reg = lower_expr(*s.value, lir_func, current_block);
-            // Allocate a virtual register for the target variable
-            VirtualReg target{lir_func.next_reg++, val_reg.type};
+            // Reuse existing register if variable was declared before
+            auto it = var_reg_map_.find(s.target_name);
+            VirtualReg target;
+            if (it != var_reg_map_.end()) {
+                target = it->second;
+            } else {
+                target = lir_func.new_reg(val_reg.type);
+                var_reg_map_[s.target_name] = target;
+            }
             emit_with_var(current_block, LIROpcode::Move, target, val_reg, {0, nullptr}, val_reg.type, s.target_name);
         } else if constexpr (std::is_same_v<T, hir::ExprStmt>) {
             lower_expr(*s.expr, lir_func, current_block);
@@ -79,32 +93,42 @@ void HIRToLIR::lower_stmt(hir::HIRStmt& stmt, LIRFunction& lir_func, LIRBasicBlo
                 emit(current_block, LIROpcode::Ret, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr);
             }
         } else if constexpr (std::is_same_v<T, hir::IfStmt>) {
-            auto cond_reg = lower_expr(*s.condition, lir_func, current_block);
             auto then_label = new_label(".then");
             auto else_label = new_label(".else");
             auto end_label = new_label(".endif");
 
+            // Push the current block (with prior statements) first
+            lir_func.blocks.push_back(std::move(current_block));
+            current_block = LIRBasicBlock{};
+
+            // Evaluate condition in a fresh block
+            auto cond_reg = lower_expr(*s.condition, lir_func, current_block);
+
             // Branch: if cond is true, jump to then
             emit(current_block, LIROpcode::Branch, {0, nullptr}, cond_reg, {0, nullptr}, nullptr, then_label);
 
-            // Else block
-            if (s.else_block) {
-                current_block.label = else_label;
-                lir_func.blocks.push_back(std::move(current_block));
-                current_block = LIRBasicBlock{};
-                lower_block(*s.else_block, lir_func, current_block);
-                emit(current_block, LIROpcode::Jump, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr, end_label);
-            }
-
-            // Then block
-            current_block.label = then_label;
+            // Push condition block - fallthrough goes to else
             lir_func.blocks.push_back(std::move(current_block));
             current_block = LIRBasicBlock{};
+
+            // Else block (reachable by fallthrough when condition is false)
+            // Always create it - either with the else body or empty
+            current_block.label = else_label;
+            if (s.else_block) {
+                lower_block(*s.else_block, lir_func, current_block);
+            }
+            emit(current_block, LIROpcode::Jump, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr, end_label);
+            lir_func.blocks.push_back(std::move(current_block));
+            current_block = LIRBasicBlock{};
+
+            // Then block (reachable by Branch when condition is true)
+            current_block.label = then_label;
             if (s.then_block) {
                 lower_block(*s.then_block, lir_func, current_block);
             }
-            emit(current_block, LIROpcode::Jump, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr,
-                 s.else_block ? end_label : else_label);
+            emit(current_block, LIROpcode::Jump, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr, end_label);
+            lir_func.blocks.push_back(std::move(current_block));
+            current_block = LIRBasicBlock{};
 
             // End label
             current_block.label = end_label;
@@ -115,27 +139,35 @@ void HIRToLIR::lower_stmt(hir::HIRStmt& stmt, LIRFunction& lir_func, LIRBasicBlo
             auto body_label = new_label(".while.body");
             auto end_label = new_label(".while.end");
 
-            // Jump to condition check
+            // Jump to condition check (emitted into the CURRENT block which has prior stmts)
             emit(current_block, LIROpcode::Jump, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr, loop_label);
+
+            // Push the current block (prior stmts + jump to condition)
+            lir_func.blocks.push_back(std::move(current_block));
+            current_block = LIRBasicBlock{};
 
             // Condition block
             current_block.label = loop_label;
-            lir_func.blocks.push_back(std::move(current_block));
-            current_block = LIRBasicBlock{};
             auto cond_reg = lower_expr(*s.condition, lir_func, current_block);
             emit(current_block, LIROpcode::Branch, {0, nullptr}, cond_reg, {0, nullptr}, nullptr, body_label);
             emit(current_block, LIROpcode::Jump, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr, end_label);
 
-            // Body block
-            current_block.label = body_label;
+            // Push condition block
             lir_func.blocks.push_back(std::move(current_block));
             current_block = LIRBasicBlock{};
+
+            // Body block
+            current_block.label = body_label;
             if (s.body) {
                 lower_block(*s.body, lir_func, current_block);
             }
             emit(current_block, LIROpcode::Jump, {0, nullptr}, {0, nullptr}, {0, nullptr}, nullptr, loop_label);
 
-            // End label
+            // Push body block
+            lir_func.blocks.push_back(std::move(current_block));
+            current_block = LIRBasicBlock{};
+
+            // End label (empty block - fallthrough target when condition is false)
             current_block.label = end_label;
             lir_func.blocks.push_back(std::move(current_block));
             current_block = LIRBasicBlock{};
@@ -175,9 +207,16 @@ VirtualReg HIRToLIR::lower_expr(hir::HIRExpr& expr, LIRFunction& lir_func, LIRBa
             emit(current_block, LIROpcode::Move, dest, {0, nullptr}, {0, nullptr}, e.type, "", 0);
             return dest;
         } else if constexpr (std::is_same_v<T, hir::VarRef>) {
+            // Look up the variable's register from the map
+            auto it = var_reg_map_.find(e.name);
+            if (it != var_reg_map_.end()) {
+                // Variable found - copy from its register
+                VirtualReg dest{lir_func.next_reg++, it->second.type};
+                emit(current_block, LIROpcode::Move, dest, it->second, {0, nullptr}, it->second.type);
+                return dest;
+            }
+            // Fallback: use Load with variable name (for params, etc.)
             VirtualReg dest{lir_func.next_reg++, e.type};
-            // Variable references use the variable name as a pseudo-label;
-            // the codegen resolves these to stack slots
             emit(current_block, LIROpcode::Load, dest, {0, nullptr}, {0, nullptr}, e.type, e.name);
             return dest;
         } else if constexpr (std::is_same_v<T, hir::BinaryOp>) {
@@ -204,16 +243,24 @@ VirtualReg HIRToLIR::lower_expr(hir::HIRExpr& expr, LIRFunction& lir_func, LIRBa
             emit(current_block, opcode, dest, operand, {0, nullptr}, e.type);
             return dest;
         } else if constexpr (std::is_same_v<T, hir::CallOp>) {
-            // Lower arguments into sequential virtual registers
-            VirtualReg first_arg{lir_func.next_reg++, nullptr};
+            // Lower arguments
             std::vector<VirtualReg> arg_regs;
             for (auto& arg : e.args) {
                 arg_regs.push_back(lower_expr(*arg, lir_func, current_block));
             }
-            // The codegen uses consecutive reg IDs starting from first_arg.id
-            // as argument register slots
+            // Pack arguments into consecutive virtual registers starting at first_arg.id
+            // so the C backend can read them sequentially
+            VirtualReg first_arg{lir_func.next_reg++, nullptr};
             if (!arg_regs.empty()) {
                 first_arg = arg_regs[0];
+                // Ensure args are in consecutive registers from first_arg onward
+                for (std::size_t i = 0; i < arg_regs.size(); ++i) {
+                    lir::RegId expected = first_arg.id + static_cast<lir::RegId>(i);
+                    if (arg_regs[i].id != expected) {
+                        emit(current_block, LIROpcode::Move, VirtualReg{expected, arg_regs[i].type},
+                             arg_regs[i], {0, nullptr}, arg_regs[i].type);
+                    }
+                }
             }
             VirtualReg dest{lir_func.next_reg++, e.return_type};
             emit(current_block, LIROpcode::Call, dest, first_arg, {0, nullptr}, e.return_type, e.callee_name);

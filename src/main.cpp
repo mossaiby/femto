@@ -16,14 +16,17 @@
 #include "lir/hir_to_lir.h"
 #include "lir/lir_optimizer.h"
 #include "codegen/x86_64/x86_64.h"
+#include "codegen/c/c.h"
 
 struct CompilerOptions {
     std::string source_path;
     std::string output_path;
     std::string emit_asm_path;
     std::string emit_obj_path;
+    std::string target = "x86_64";
     bool keep_asm = false;
     bool keep_obj = false;
+    bool keep_c = false;
     bool emit_hir = false;
     bool emit_lir = false;
     bool show_tokens = false;
@@ -38,10 +41,12 @@ static void print_usage(const char* prog) {
         "Usage: %s [options] <source.femto>\n\n"
         "Options:\n"
         "  -o <file>           Output executable path (default: <source stem>)\n"
-        "  --emit-asm <file>   Write generated NASM assembly to file\n"
+        "  --target <x86_64|c> Target backend (default: x86_64)\n"
+        "  --emit-asm <file>   Write generated NASM assembly / C source to file\n"
         "  --emit-obj <file>   Write assembled object to file\n"
         "  --keep-asm          Keep intermediate .asm file\n"
         "  --keep-obj          Keep intermediate .o file\n"
+        "  --keep-c            Keep intermediate .c file (C backend only)\n"
         "  --emit-hir          Dump HIR to stderr\n"
         "  --emit-lir          Dump LIR to stderr\n"
         "  --tokens            Dump token stream to stderr\n"
@@ -65,10 +70,18 @@ static bool parse_args(int argc, char* argv[], CompilerOptions& opts) {
             opts.emit_asm_path = argv[++i];
         } else if (arg == "--emit-obj" && i + 1 < argc) {
             opts.emit_obj_path = argv[++i];
+        } else if (arg == "--target" && i + 1 < argc) {
+            opts.target = argv[++i];
+            if (opts.target != "x86_64" && opts.target != "c") {
+                std::fprintf(stderr, "error: unknown target '%s' (expected x86_64 or c)\n", opts.target.c_str());
+                return false;
+            }
         } else if (arg == "--keep-asm") {
             opts.keep_asm = true;
         } else if (arg == "--keep-obj") {
             opts.keep_obj = true;
+        } else if (arg == "--keep-c") {
+            opts.keep_c = true;
         } else if (arg == "--emit-hir") {
             opts.emit_hir = true;
         } else if (arg == "--emit-lir") {
@@ -252,7 +265,48 @@ int main(int argc, char* argv[]) {
     femto::lir::LIROptimizer lir_opt;
     lir_opt.optimize(lir);
 
-    // LIR -> NASM assembly
+    if (opts.target == "c") {
+        // ---- C backend ----
+        log_verbose(opts, "Generating C source...");
+        femto::codegen::c::CCodeGen codegen;
+        std::string c_code = codegen.generate(lir);
+
+        // Derive .c path
+        std::filesystem::path c_path = source_path.stem().string() + ".c";
+        if (!opts.emit_asm_path.empty()) {
+            c_path = opts.emit_asm_path;
+        }
+
+        // Write C file
+        std::ofstream c_file(c_path);
+        if (!c_file.is_open()) {
+            std::fprintf(stderr, "error: cannot write: %s\n", c_path.c_str());
+            return 1;
+        }
+        c_file << c_code;
+        c_file.close();
+        log_verbose(opts, ("Wrote C source: " + c_path.string()).c_str());
+
+        // Compile with cc
+        log_verbose(opts, "Compiling with cc...");
+        {
+            std::string cc_cmd = "cc -o " + opts.output_path + " " + c_path.string();
+            int result = run_command(cc_cmd, opts);
+            if (result != 0) {
+                std::fprintf(stderr, "error: cc failed with exit code %d\n", result);
+                if (!opts.keep_c) std::filesystem::remove(c_path);
+                return 1;
+            }
+        }
+
+        // Cleanup
+        if (!opts.keep_c) std::filesystem::remove(c_path);
+
+        log_verbose(opts, ("Done: " + opts.output_path).c_str());
+        return 0;
+    }
+
+    // ---- x86-64 / NASM backend ----
     log_verbose(opts, "Generating x86-64 assembly...");
     femto::codegen::x86_64::X86_64CodeGen codegen;
     std::string asm_code = codegen.generate(lir);
