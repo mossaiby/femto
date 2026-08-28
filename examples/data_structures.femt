@@ -1,0 +1,54 @@
+Point :: struct {
+    int32 x = 0;
+    int32 y = 0;
+}
+
+#export
+add_to_point :: (Point* pt, int32 dx, int32 dy) -> int32 {
+    pt.x += dx; // auto-dereference on pointer!
+    pt.y += dy;
+    return pt.x + pt.y;
+}
+
+#export
+sum_slice :: (int32[] s) -> int32 {
+    int32 total = 0;
+    int32 i = 0;
+    int32 len = s.length();
+    while (i < len) {
+        total += s[i];
+        i++;
+    }
+    return total;
+}
+
+#export
+main :: () -> int32 {
+    // 1. Structs & Field Mutation
+    Point p = { .x = 15, .y = 27 };
+    p.x += 5; // 20
+    int32 s1 = p.x + p.y; // 20 + 27 = 47
+
+    // 2. Fixed-Size Array & Indexing
+    int32[4] arr = [10, 20, 30, 40];
+    arr[1] = 25;
+    arr[2] += 5; // 35
+    int32 s2 = arr[0] + arr[1] + arr[2] + arr[3]; // 10 + 25 + 35 + 40 = 110
+
+    // 3. Pointers & Address-Of (&)
+    Point pt_var = { .x = 10, .y = 20 };
+    int32 s3 = add_to_point(&pt_var, 5, 15); // 15 + 35 = 50
+
+    // 4. Slicing Subranges ([1..4]) and .length()
+    int32[5] numbers = [10, 20, 30, 40, 50];
+    int32[] sub = numbers[1..4]; // [20, 30, 40], len = 3
+    int32 s4 = sum_slice(sub); // 20 + 30 + 40 = 90
+
+    // Verification check:
+    // s1 = 47, s2 = 110, s3 = 50, s4 = 90
+    if (s1 == 47 && s2 == 110 && s3 == 50 && s4 == 90) then {
+        return 77; // All checks passed!
+    } else {
+        return 1;
+    }
+}

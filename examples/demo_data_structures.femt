@@ -1,0 +1,63 @@
+Point :: struct {
+    int32 x = 0;
+    int32 y = 0;
+}
+
+Color :: enum -> uint8 {
+    red   = 10,
+    green = 20,
+    blue  = 30
+}
+
+#export
+test_struct_and_pointer :: () -> int32
+{
+    // Struct instantiation with designated initializer
+    Point p = { .x = 10, .y = 20 };
+
+    // Pointer address-of and auto-dereference mutation
+    Point* ptr = &p;
+    ptr.x = 50; // Automatically dereferences ptr and modifies p.x
+
+    return p.x + ptr.y; // 50 + 20 = 70
+}
+
+#export
+test_enum :: () -> int32
+{
+    // Scoped enum access
+    int32 c = Color::green;
+    return c; // 20
+}
+
+#export
+test_array_and_slice :: () -> int32
+{
+    // Fixed-size array
+    int32[5] arr = [10, 20, 30, 40, 50];
+
+    // Array mutation
+    arr[0] = 5;
+
+    // Sub-slicing arr[start..end]
+    int32[] s = arr[1..4]; // slice with elements [20, 30, 40], length 3
+
+    // Length call
+    int32 len = s.length();
+
+    return arr[0] + s[0] + s[1] + s[2] + len; // 5 + 20 + 30 + 40 + 3 = 98
+}
+
+#export
+main :: () -> int32
+{
+    int32 r1 = test_struct_and_pointer(); // 70
+    int32 r2 = test_enum();               // 20
+    int32 r3 = test_array_and_slice();    // 98
+
+    if (r1 == 70 && r2 == 20 && r3 == 98) then {
+        return 42; // All data structure checks passed!
+    } else {
+        return 1;
+    }
+}

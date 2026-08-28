@@ -1,0 +1,109 @@
+// 1. Tests 'while' loop, compound assignment (*=), and increment (++)
+#export
+factorial :: (int32 n) -> int32
+{
+    int32 result = 1;
+    int32 i = 1;
+    while (i <= n) {
+        result *= i;
+        i++;
+    }
+    return result;
+}
+
+// 2. Tests 'if/then/else', modulo (%), division (/=), and short-circuit logic (&&, ||)
+#export
+collatz_steps :: (int32 n) -> int32
+{
+    int32 steps = 0;
+    while (n > 1) {
+        if (n % 2 == 0) then {
+            n /= 2;
+        } else {
+            n = n * 3 + 1;
+        }
+        steps++;
+    }
+    return steps;
+}
+
+// 3. Tests 'do-while' loop and compound assignment (-=)
+#export
+countdown_steps :: (int32 start_val) -> int32
+{
+    int32 count = 0;
+    int32 x = start_val;
+    do {
+        count++;
+        x -= 2;
+    } while (x > 0);
+    return count;
+}
+
+// 4. Tests 'switch' with case blocks and 'default'
+#export
+eval_grade :: (int32 score) -> int32
+{
+    int32 code = 0;
+    switch (score) {
+        case 100 { code = 1; }
+        case 90  { code = 2; }
+        case 85  { code = 3; }
+        default  { code = 99; }
+    }
+    return code;
+}
+
+// 5. Tests nested loops, 'continue', and multi-level 'break(2)'
+#export
+nested_loop_test :: () -> int32
+{
+    int32 sum = 0;
+    int32 i = 0;
+    while (i < 5) {
+        i++;
+        int32 j = 0;
+        while (j < 5) {
+            j++;
+            if (j == 2) then {
+                continue; // Skip j == 2
+            }
+            if (i == 3 && j == 4) then {
+                break(2); // Break out of BOTH loops
+            }
+            sum++;
+        }
+    }
+    // i=1 -> j=1,3,4,5 (4 iterations)
+    // i=2 -> j=1,3,4,5 (4 iterations)
+    // i=3 -> j=1,3     (2 iterations, then breaks both loops)
+    // Total sum = 10
+    return sum;
+}
+
+// 6. Entry point: verifies all tests and returns status 42 on success
+#export
+main :: () -> int32
+{
+    // Test 1: 5! = 120
+    int32 fact = factorial(5);
+
+    // Test 2: Collatz for 6 -> 3 -> 10 -> 5 -> 16 -> 8 -> 4 -> 2 -> 1 (8 steps)
+    int32 steps = collatz_steps(6);
+
+    // Test 3: 10 down by 2 -> 5 steps
+    int32 count = countdown_steps(10);
+
+    // Test 4: Score 85 -> code 3
+    int32 grade = eval_grade(85);
+
+    // Test 5: Multi-level break -> 10
+    int32 loop_res = nested_loop_test();
+
+    // Verify all results
+    if (fact == 120 && steps == 8 && count == 5 && grade == 3 && loop_res == 10) then {
+        return 42; // All checks passed!
+    } else {
+        return 1;  // Failure
+    }
+}
