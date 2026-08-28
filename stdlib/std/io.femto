@@ -1,0 +1,33 @@
+import std::builtin;
+
+#export
+print :: (string8 s) -> void {
+    __builtin_print_str(s);
+}
+
+#export
+println :: (string8 s) -> void {
+    __builtin_print_str(s);
+    __builtin_print_nl();
+}
+
+#export
+print_int :: (int64 n) -> void {
+    __builtin_print_int(n);
+}
+
+#export
+println_int :: (int64 n) -> void {
+    __builtin_print_int(n);
+    __builtin_print_nl();
+}
+
+#export
+println_empty :: () -> void {
+    __builtin_print_nl();
+}
+
+#export
+print_char :: (int32 c) -> void {
+    __builtin_print_char(c);
+}

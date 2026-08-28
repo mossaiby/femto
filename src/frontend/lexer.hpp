@@ -13,6 +13,7 @@ public:
         : sm_(sm), diag_(diag), src_(sm.source()), cursor_(0) {}
 
     Token next_token();
+    std::string_view source() const { return src_; }
 
 private:
     char peek(size_t ahead = 0) const {

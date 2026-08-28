@@ -56,6 +56,8 @@ public:
     const std::unordered_map<std::string, std::unordered_map<std::string, int64_t>>& enum_defs() const { return enum_defs_; }
     const std::unordered_map<std::string, int64_t>& const_defs() const { return const_defs_; }
 
+    static std::string get_type_name(const ASTType* ty);
+
 private:
     Arena& arena_;
     Diagnostics& diag_;

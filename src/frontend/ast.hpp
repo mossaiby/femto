@@ -161,6 +161,7 @@ struct ASTConstDecl {
 };
 
 struct ASTProgram {
+    std::vector<std::string> imports;
     std::vector<ASTFunctionDecl*> functions;
     std::vector<ASTStructDecl*> structs;
     std::vector<ASTEnumDecl*> enums;

@@ -1,0 +1,28 @@
+// ============================================================================
+// FILE: examples/example-08.femto
+// ============================================================================
+import std::io;
+import std::mem;
+import std::collection;
+
+#export
+main :: () -> int32 {
+    // 1. Scoped calls to std::io
+    std::io::println("1. Automatic module resolution works!");
+    std::io::print("   Result: ");
+    std::io::println_int(42);
+
+    // 2. Scoped calls to std::mem
+    int64 buffer = std::mem::alloc_raw(64)??;
+    std::mem::set(buffer, 0, 64);
+    std::mem::free(buffer);
+    std::io::println("2. Dynamic memory allocated and freed.");
+
+    // 3. Scoped calls to std::collection
+    Array<int32> numbers = array_create<int32>(8);
+    std::io::print("3. Array capacity: ");
+    std::io::println_int(numbers.capacity);
+    array_destroy<int32>(&numbers);
+
+    return 42;
+}

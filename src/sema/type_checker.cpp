@@ -1,7 +1,50 @@
 #include "sema/type_checker.hpp"
 #include <cstring>
+#include <algorithm>
 
 namespace femto {
+
+std::string TypeChecker::get_type_name(const ASTType* ty) {
+    if (!ty) return "int32";
+    if (ty->kind == TypeKind::Primitive) {
+        switch (ty->primitive_kind) {
+            case TokenKind::KwInt8: return "int8";
+            case TokenKind::KwInt16: return "int16";
+            case TokenKind::KwInt32: return "int32";
+            case TokenKind::KwInt64: return "int64";
+            case TokenKind::KwUint8: return "uint8";
+            case TokenKind::KwUint16: return "uint16";
+            case TokenKind::KwUint32: return "uint32";
+            case TokenKind::KwUint64: return "uint64";
+            case TokenKind::KwFloat32: return "float32";
+            case TokenKind::KwFloat64: return "float64";
+            case TokenKind::KwBool8: return "bool8";
+            case TokenKind::KwChar8: return "char8";
+            case TokenKind::KwString8: return "string8";
+            case TokenKind::KwString16: return "string16";
+            case TokenKind::KwString32: return "string32";
+            case TokenKind::KwVoid: return "void";
+            default: return "int32";
+        }
+    }
+    if (ty->kind == TypeKind::Custom) {
+        std::string n = std::string(ty->custom_name);
+        for (auto* g : ty->generic_args) {
+            n += "__" + get_type_name(g);
+        }
+        return n;
+    }
+    if (ty->kind == TypeKind::Pointer) {
+        return get_type_name(ty->pointee_or_element) + "_ptr";
+    }
+    if (ty->kind == TypeKind::Slice) {
+        return get_type_name(ty->pointee_or_element) + "_slice";
+    }
+    if (ty->kind == TypeKind::Array) {
+        return get_type_name(ty->pointee_or_element) + "_arr" + std::to_string(ty->array_size);
+    }
+    return "int32";
+}
 
 void TypeChecker::init_primitives() {
     auto make_prim = [&](TokenKind k, uint32_t sz) {
@@ -9,18 +52,22 @@ void TypeChecker::init_primitives() {
         return t;
     };
 
-    type_env_["int8"]    = make_prim(TokenKind::KwInt8, 1);
-    type_env_["int16"]   = make_prim(TokenKind::KwInt16, 2);
-    type_env_["int32"]   = make_prim(TokenKind::KwInt32, 4);
-    type_env_["int64"]   = make_prim(TokenKind::KwInt64, 8);
-    type_env_["uint8"]   = make_prim(TokenKind::KwUint8, 1);
-    type_env_["uint16"]  = make_prim(TokenKind::KwUint16, 2);
-    type_env_["uint32"]  = make_prim(TokenKind::KwUint32, 4);
-    type_env_["uint64"]  = make_prim(TokenKind::KwUint64, 8);
-    type_env_["float32"] = make_prim(TokenKind::KwFloat32, 4);
-    type_env_["float64"] = make_prim(TokenKind::KwFloat64, 8);
-    type_env_["bool8"]   = make_prim(TokenKind::KwBool8, 1);
-    type_env_["char8"]   = make_prim(TokenKind::KwChar8, 1);
+    type_env_["int8"]     = make_prim(TokenKind::KwInt8, 1);
+    type_env_["int16"]    = make_prim(TokenKind::KwInt16, 2);
+    type_env_["int32"]    = make_prim(TokenKind::KwInt32, 4);
+    type_env_["int64"]    = make_prim(TokenKind::KwInt64, 8);
+    type_env_["uint8"]    = make_prim(TokenKind::KwUint8, 1);
+    type_env_["uint16"]   = make_prim(TokenKind::KwUint16, 2);
+    type_env_["uint32"]   = make_prim(TokenKind::KwUint32, 4);
+    type_env_["uint64"]   = make_prim(TokenKind::KwUint64, 8);
+    type_env_["float32"]  = make_prim(TokenKind::KwFloat32, 4);
+    type_env_["float64"]  = make_prim(TokenKind::KwFloat64, 8);
+    type_env_["bool8"]    = make_prim(TokenKind::KwBool8, 1);
+    type_env_["char8"]    = make_prim(TokenKind::KwChar8, 1);
+    type_env_["string8"]  = make_prim(TokenKind::KwString8, 8);
+    type_env_["string16"] = make_prim(TokenKind::KwString16, 8);
+    type_env_["string32"] = make_prim(TokenKind::KwString32, 8);
+    type_env_["void"]     = make_prim(TokenKind::KwVoid, 0);
 }
 
 void TypeChecker::compute_struct_layout(ASTStructDecl* decl, std::string custom_name) {
@@ -59,7 +106,7 @@ void TypeChecker::compute_struct_layout(ASTStructDecl* decl, std::string custom_
 std::string TypeChecker::monomorphize_struct(ASTType* generic_ty) {
     std::string mangled = std::string(generic_ty->custom_name);
     for (auto* a : generic_ty->generic_args) {
-        mangled += "__" + std::string(a->custom_name.empty() ? "int32" : a->custom_name);
+        mangled += "__" + get_type_name(a);
     }
 
     if (type_env_.find(mangled) != type_env_.end()) {
@@ -93,7 +140,7 @@ std::string TypeChecker::monomorphize_function(ASTExpr* call_expr, ASTProgram& p
     std::string orig_name = std::string(call_expr->left->raw_text);
     std::string mangled = orig_name;
     for (auto* a : call_expr->generic_args) {
-        mangled += "__" + std::string(a->custom_name.empty() ? "int32" : a->custom_name);
+        mangled += "__" + get_type_name(a);
     }
 
     // Check if already monomorphized
@@ -189,10 +236,26 @@ ASTStmt* TypeChecker::clone_and_substitute_stmt(ASTStmt* stmt, const std::unorde
     return cs;
 }
 
+static int64_t parse_literal_int(std::string_view raw) {
+    std::string s;
+    for (char c : raw) {
+        if (c != '_') s.push_back(c);
+    }
+    if (s == "true") return 1;
+    if (s == "false") return 0;
+    if (s.size() >= 3 && s.front() == '\'' && s.back() == '\'') {
+        return (unsigned char)s[1];
+    }
+    if (s.rfind("0b", 0) == 0 || s.rfind("0B", 0) == 0) {
+        return std::stoll(s.substr(2), nullptr, 2);
+    }
+    return std::stoll(s, nullptr, 0);
+}
+
 int64_t TypeChecker::eval_const_expr(ASTExpr* expr) {
     if (!expr) return 0;
     if (expr->kind == ExprKind::Literal) {
-        return std::stoll(std::string(expr->raw_text));
+        return parse_literal_int(expr->raw_text);
     }
     if (expr->kind == ExprKind::Identifier) {
         auto it = const_defs_.find(std::string(expr->raw_text));
@@ -261,7 +324,7 @@ SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
     }
     if (ast_ty->kind == TypeKind::Result) {
         auto* payload = resolve_ast_type(ast_ty->pointee_or_element);
-        uint32_t sz = 8;
+        uint32_t sz = 16;
         auto* r = new SemaType{SemaType::Kind::Result, sz, 8, ResultTypeInfo{payload}};
         return r;
     }
@@ -424,11 +487,11 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
                 return std::get<PointerTypeInfo>(sub->data).pointee;
             }
             if (expr->op == "success") {
-                auto* r = new SemaType{SemaType::Kind::Result, 8, 8, ResultTypeInfo{sub}};
+                auto* r = new SemaType{SemaType::Kind::Result, 16, 8, ResultTypeInfo{sub}};
                 return r;
             }
             if (expr->op == "failure") {
-                auto* r = new SemaType{SemaType::Kind::Result, 8, 8, ResultTypeInfo{type_env_["int32"]}};
+                auto* r = new SemaType{SemaType::Kind::Result, 16, 8, ResultTypeInfo{type_env_["int32"]}};
                 return r;
             }
             return sub;
@@ -561,7 +624,7 @@ bool TypeChecker::check_program(ASTProgram& prog) {
     size_t i = 0;
     while (i < prog.functions.size()) {
         auto* fn = prog.functions[i];
-        if (fn->generic_params.empty()) {
+        if (fn->generic_params.empty() && !fn->is_extern_c) {
             symbol_table_.clear();
             current_loop_depth_ = 0;
             for (auto& p : fn->params) {

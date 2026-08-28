@@ -1,11 +1,45 @@
 #include "codegen/nasm_emitter.hpp"
+#include <iomanip>
+#include <cctype>
+#include <unordered_set>
 
 namespace femto {
+
+static int64_t parse_literal_int_emitter(std::string_view raw) {
+    std::string s;
+    for (char c : raw) {
+        if (c != '_') s.push_back(c);
+    }
+    if (s == "true") return 1;
+    if (s == "false") return 0;
+    if (s.size() >= 3 && s.front() == '\'' && s.back() == '\'') {
+        return (unsigned char)s[1];
+    }
+    if (s.rfind("0b", 0) == 0 || s.rfind("0B", 0) == 0) {
+        return std::stoll(s.substr(2), nullptr, 2);
+    }
+    return std::stoll(s, nullptr, 0);
+}
+
+static std::string sanitize_nasm_identifier(std::string_view name) {
+    std::string s;
+    for (size_t i = 0; i < name.size(); ++i) {
+        if (name[i] == ':' && i + 1 < name.size() && name[i + 1] == ':') {
+            s.push_back('_');
+            i++;
+        } else if (name[i] == ':' || name[i] == '.' || name[i] == '/' || name[i] == '-') {
+            s.push_back('_');
+        } else {
+            s.push_back(name[i]);
+        }
+    }
+    return s;
+}
 
 int64_t NasmEmitter::eval_const_expr(const ASTExpr* expr) {
     if (!expr) return 0;
     if (expr->kind == ExprKind::Literal) {
-        return std::stoll(std::string(expr->raw_text));
+        return parse_literal_int_emitter(expr->raw_text);
     }
     if (expr->kind == ExprKind::Identifier) {
         auto it = const_defs_.find(std::string(expr->raw_text));
@@ -38,11 +72,19 @@ int64_t NasmEmitter::eval_const_expr(const ASTExpr* expr) {
 
 SemaType* NasmEmitter::resolve_type_node(ASTType* ast_ty) {
     if (!ast_ty) return nullptr;
+    if (ast_ty->kind == TypeKind::Primitive) {
+        for (auto& [name, ty] : type_env_) {
+            if (ty->kind == SemaType::Kind::Primitive && 
+                std::get<PrimitiveTypeInfo>(ty->data).kind == ast_ty->primitive_kind) {
+                return ty;
+            }
+        }
+    }
     if (ast_ty->kind == TypeKind::Custom) {
         std::string name = std::string(ast_ty->custom_name);
         if (!ast_ty->generic_args.empty()) {
             for (auto* a : ast_ty->generic_args) {
-                name += "__" + std::string(a->custom_name.empty() ? "int32" : a->custom_name);
+                name += "__" + TypeChecker::get_type_name(a);
             }
         }
         auto it = type_env_.find(name);
@@ -63,7 +105,7 @@ SemaType* NasmEmitter::resolve_type_node(ASTType* ast_ty) {
     }
     if (ast_ty->kind == TypeKind::Result) {
         auto* payload = resolve_type_node(ast_ty->pointee_or_element);
-        return new SemaType{SemaType::Kind::Result, 8, 8, ResultTypeInfo{payload}};
+        return new SemaType{SemaType::Kind::Result, 16, 8, ResultTypeInfo{payload}};
     }
     auto it = type_env_.find("int32");
     return it != type_env_.end() ? it->second : nullptr;
@@ -75,8 +117,19 @@ std::string NasmEmitter::generate_assembly(const ASTProgram& program) {
     rodata_sec_ << "str_bounds_panic: db \"Femto panic: Slice index out of bounds\", 10, 0\n";
     data_sec_   << "section .data\n";
 
+    std::unordered_set<std::string> extern_declared;
     for (const auto* fn : program.functions) {
-        if (fn->generic_params.empty()) {
+        if (fn->is_extern_c) {
+            std::string ext_name = sanitize_nasm_identifier(fn->name);
+            if (!extern_declared.count(ext_name)) {
+                extern_declared.insert(ext_name);
+                text_sec_ << "extern " << ext_name << "\n";
+            }
+        }
+    }
+
+    for (const auto* fn : program.functions) {
+        if (fn->generic_params.empty() && !fn->is_extern_c) {
             emit_function(fn);
         }
     }
@@ -89,10 +142,12 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
     loop_stack_.clear();
     subject_stack_.clear();
 
+    std::string fn_lbl = sanitize_nasm_identifier(fn->name);
+
     if (fn->is_exported || fn->name == "main") {
-        text_sec_ << "global " << fn->name << "\n";
+        text_sec_ << "global " << fn_lbl << "\n";
     }
-    text_sec_ << fn->name << ":\n";
+    text_sec_ << fn_lbl << ":\n";
     text_sec_ << "    push rbp\n";
     text_sec_ << "    mov rbp, rsp\n";
     text_sec_ << "    sub rsp, 512\n";
@@ -241,7 +296,11 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
                         if (f_it != s_info.field_map.end()) {
                             uint32_t f_off = s_info.fields[f_it->second].offset;
                             emit_expression(sf.second);
-                            text_sec_ << "    mov [rbp - " << (stack_offset - f_off) << "], eax\n";
+                            if (s_info.fields[f_it->second].type && s_info.fields[f_it->second].type->size_bytes == 8) {
+                                text_sec_ << "    mov [rbp - " << (stack_offset - f_off) << "], rax\n";
+                            } else {
+                                text_sec_ << "    mov [rbp - " << (stack_offset - f_off) << "], eax\n";
+                            }
                         }
                     }
                 } else if (stmt->init_expr->kind == ExprKind::ArrayLiteral) {
@@ -269,9 +328,17 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
 
                     text_sec_ << "    mov [rbp - " << stack_offset << "], rdx\n";
                     text_sec_ << "    mov [rbp - " << (stack_offset - 8) << "], rbx\n";
+                } else if (v_ty && v_ty->kind == SemaType::Kind::Struct) {
+                    emit_expression(stmt->init_expr);
+                    text_sec_ << "    mov rsi, rax\n";
+                    text_sec_ << "    lea rdi, [rbp - " << stack_offset << "]\n";
+                    for (uint32_t b = 0; b < v_ty->size_bytes; b += 8) {
+                        text_sec_ << "    mov r8, [rsi + " << b << "]\n";
+                        text_sec_ << "    mov [rdi + " << b << "], r8\n";
+                    }
                 } else {
                     emit_expression(stmt->init_expr);
-                    if (v_ty && (v_ty->kind == SemaType::Kind::Pointer || v_ty->kind == SemaType::Kind::Slice || v_ty->kind == SemaType::Kind::Result)) {
+                    if (v_ty && (v_ty->kind == SemaType::Kind::Pointer || v_ty->size_bytes == 8)) {
                         text_sec_ << "    mov [rbp - " << stack_offset << "], rax\n";
                     } else {
                         text_sec_ << "    mov [rbp - " << stack_offset << "], eax\n";
@@ -294,7 +361,7 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             text_sec_ << "    push rax\n";
             emit_lvalue_address(stmt->target_expr);
             text_sec_ << "    pop rbx\n";
-            text_sec_ << "    mov [rax], ebx\n";
+            text_sec_ << "    mov [rax], rbx\n";
             break;
         }
         case StmtKind::CompoundAssignment: {
@@ -327,8 +394,8 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             break;
         }
         case StmtKind::If: {
-            std::string else_lbl = next_label(".L_else");
-            std::string end_lbl  = next_label(".L_end_if");
+            std::string else_lbl = next_label("L_else");
+            std::string end_lbl  = next_label("L_end_if");
             emit_expression(stmt->condition);
             text_sec_ << "    cmp eax, 0\n    je " << (stmt->else_block.empty() ? end_lbl : else_lbl) << "\n";
             for (auto* s : stmt->then_block) emit_statement(s, stack_offset);
@@ -340,8 +407,8 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             break;
         }
         case StmtKind::While: {
-            std::string cond_lbl = next_label(".L_while_cond");
-            std::string break_lbl = next_label(".L_while_break");
+            std::string cond_lbl = next_label("L_while_cond");
+            std::string break_lbl = next_label("L_while_break");
             loop_stack_.push_back({cond_lbl, break_lbl});
             text_sec_ << cond_lbl << ":\n";
             emit_expression(stmt->condition);
@@ -352,9 +419,9 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             break;
         }
         case StmtKind::DoWhile: {
-            std::string start_lbl = next_label(".L_do_start");
-            std::string cond_lbl  = next_label(".L_do_cond");
-            std::string break_lbl = next_label(".L_do_break");
+            std::string start_lbl = next_label("L_do_start");
+            std::string cond_lbl  = next_label("L_do_cond");
+            std::string break_lbl = next_label("L_do_break");
             loop_stack_.push_back({cond_lbl, break_lbl});
             text_sec_ << start_lbl << ":\n";
             for (auto* s : stmt->then_block) emit_statement(s, stack_offset);
@@ -365,14 +432,14 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             break;
         }
         case StmtKind::Switch: {
-            std::string break_lbl = next_label(".L_switch_break");
+            std::string break_lbl = next_label("L_switch_break");
             loop_stack_.push_back({break_lbl, break_lbl});
             emit_expression(stmt->condition);
             text_sec_ << "    push rax\n";
             std::vector<std::string> case_labels;
             std::string default_label = break_lbl;
             for (size_t i = 0; i < stmt->switch_cases.size(); ++i) {
-                std::string cl = next_label(".L_case");
+                std::string cl = next_label("L_case");
                 case_labels.push_back(cl);
                 if (!stmt->switch_cases[i].match_val) default_label = cl;
             }
@@ -393,8 +460,8 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             break;
         }
         case StmtKind::Foreach: {
-            std::string cond_lbl  = next_label(".L_foreach_cond");
-            std::string break_lbl = next_label(".L_foreach_break");
+            std::string cond_lbl  = next_label("L_foreach_cond");
+            std::string break_lbl = next_label("L_foreach_break");
             loop_stack_.push_back({cond_lbl, break_lbl});
 
             emit_lvalue_address(stmt->iter_collection);
@@ -467,15 +534,13 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             break;
         }
         case StmtKind::ResultBranch: {
-            std::string fail_lbl = next_label(".L_res_fail");
-            std::string end_lbl  = next_label(".L_res_end");
+            std::string fail_lbl = next_label("L_res_fail");
+            std::string end_lbl  = next_label("L_res_end");
 
             emit_expression(stmt->condition);
-            text_sec_ << "    mov ebx, eax\n";
-            text_sec_ << "    test ebx, ebx\n";
-            text_sec_ << "    jne " << fail_lbl << "\n";
+            text_sec_ << "    test rdx, rdx\n";
+            text_sec_ << "    jnz " << fail_lbl << "\n";
 
-            text_sec_ << "    shr rax, 32\n";
             stack_offset += 8;
             local_vars_[std::string(stmt->success_var)] = VarInfo{ stack_offset, type_env_.find("int32")->second };
             text_sec_ << "    mov [rbp - " << stack_offset << "], eax\n";
@@ -485,7 +550,7 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             text_sec_ << fail_lbl << ":\n";
             stack_offset += 8;
             local_vars_[std::string(stmt->failure_var)] = VarInfo{ stack_offset, type_env_.find("int32")->second };
-            text_sec_ << "    mov [rbp - " << stack_offset << "], ebx\n";
+            text_sec_ << "    mov [rbp - " << stack_offset << "], edx\n";
             for (auto* s : stmt->failure_block) emit_statement(s, stack_offset);
 
             text_sec_ << end_lbl << ":\n";
@@ -522,8 +587,37 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
     if (!expr) return;
 
     switch (expr->kind) {
-        case ExprKind::Literal: 
-            text_sec_ << "    mov eax, " << expr->raw_text << "\n"; break;
+        case ExprKind::Literal: {
+            if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`') {
+                std::string str_lbl = next_label("L_str");
+                std::string raw = std::string(expr->raw_text.substr(1, expr->raw_text.size() - 2));
+                rodata_sec_ << str_lbl << ": db ";
+                for (size_t i = 0; i < raw.size(); ++i) {
+                    if (raw[i] == '\\' && i + 1 < raw.size()) {
+                        i++;
+                        if (raw[i] == 'n') rodata_sec_ << "10, ";
+                        else if (raw[i] == 't') rodata_sec_ << "9, ";
+                        else if (raw[i] == '0') rodata_sec_ << "0, ";
+                        else rodata_sec_ << (int)(unsigned char)raw[i] << ", ";
+                    } else {
+                        rodata_sec_ << (int)(unsigned char)raw[i] << ", ";
+                    }
+                }
+                rodata_sec_ << "0\n";
+                text_sec_ << "    lea rax, [rel " << str_lbl << "]\n";
+            } else if (expr->raw_text == "true") {
+                text_sec_ << "    mov eax, 1\n";
+            } else if (expr->raw_text == "false") {
+                text_sec_ << "    xor eax, eax\n";
+            } else if (expr->raw_text.front() == '\'') {
+                int64_t c_val = parse_literal_int_emitter(expr->raw_text);
+                text_sec_ << "    mov eax, " << c_val << "\n";
+            } else {
+                int64_t val = parse_literal_int_emitter(expr->raw_text);
+                text_sec_ << "    mov rax, " << val << "\n";
+            }
+            break;
+        }
         case ExprKind::Subject: {
             if (!subject_stack_.empty()) {
                 text_sec_ << "    mov eax, [rbp - " << subject_stack_.back() << "]\n";
@@ -549,7 +643,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
         case ExprKind::Identifier: {
             auto c_it = const_defs_.find(std::string(expr->raw_text));
             if (c_it != const_defs_.end()) {
-                text_sec_ << "    mov eax, " << c_it->second << "\n";
+                text_sec_ << "    mov rax, " << c_it->second << "\n";
                 return;
             }
 
@@ -571,7 +665,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             if (it != local_vars_.end()) {
                 if (it->second.type && (it->second.type->kind == SemaType::Kind::Struct || it->second.type->kind == SemaType::Kind::Array)) {
                     text_sec_ << "    lea rax, [rbp - " << it->second.stack_offset << "]\n";
-                } else if (it->second.type && (it->second.type->kind == SemaType::Kind::Pointer || it->second.type->kind == SemaType::Kind::Result)) {
+                } else if (it->second.type && (it->second.type->kind == SemaType::Kind::Pointer || it->second.type->size_bytes == 8)) {
                     text_sec_ << "    mov rax, [rbp - " << it->second.stack_offset << "]\n";
                 } else if (it->second.type && it->second.type->kind == SemaType::Kind::Slice) {
                     text_sec_ << "    mov rax, [rbp - " << it->second.stack_offset << "]\n";
@@ -588,7 +682,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 text_sec_ << "    mov eax, [rax + 8]\n";
             } else {
                 emit_lvalue_address(expr);
-                text_sec_ << "    mov eax, [rax]\n";
+                text_sec_ << "    mov rax, [rax]\n";
             }
             break;
         }
@@ -602,20 +696,22 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 emit_lvalue_address(expr->left);
             } else if (expr->op == "*") {
                 emit_expression(expr->left);
-                text_sec_ << "    mov eax, [rax]\n";
+                text_sec_ << "    mov rax, [rax]\n";
             } else if (expr->op == "success") {
                 if (expr->left) {
                     emit_expression(expr->left);
-                    text_sec_ << "    shl rax, 32\n";
                 } else {
                     text_sec_ << "    xor eax, eax\n";
                 }
+                text_sec_ << "    xor edx, edx\n";
             } else if (expr->op == "failure") {
                 if (expr->left) {
                     emit_expression(expr->left);
+                    text_sec_ << "    mov edx, eax\n";
                 } else {
-                    text_sec_ << "    mov eax, 1\n";
+                    text_sec_ << "    mov edx, 1\n";
                 }
+                text_sec_ << "    xor eax, eax\n";
             } else if (expr->op == "-") {
                 emit_expression(expr->left);
                 text_sec_ << "    neg eax\n";
@@ -629,18 +725,16 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             break;
         }
         case ExprKind::PostfixUnwrap: {
-            std::string ok_lbl = next_label(".L_unwrap_ok");
+            std::string ok_lbl = next_label("L_unwrap_ok");
             emit_expression(expr->left);
-            text_sec_ << "    mov ebx, eax\n";
-            text_sec_ << "    test ebx, ebx\n";
+            text_sec_ << "    test rdx, rdx\n";
             text_sec_ << "    jz " << ok_lbl << "\n";
             text_sec_ << "    mov rsp, rbp\n    pop rbp\n    ret\n";
             text_sec_ << ok_lbl << ":\n";
-            text_sec_ << "    shr rax, 32\n";
             break;
         }
         case ExprKind::Match: {
-            std::string match_end_lbl = next_label(".L_match_end");
+            std::string match_end_lbl = next_label("L_match_end");
             emit_expression(expr->left);
 
             uint32_t subj_off = 480;
@@ -648,7 +742,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             text_sec_ << "    mov [rbp - " << subj_off << "], eax\n";
 
             for (size_t i = 0; i < expr->match_arms.size(); ++i) {
-                std::string next_arm_lbl = next_label(".L_match_next");
+                std::string next_arm_lbl = next_label("L_match_next");
                 if (expr->match_arms[i].condition) {
                     emit_expression(expr->match_arms[i].condition);
                     text_sec_ << "    test eax, eax\n";
@@ -668,7 +762,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
         }
         case ExprKind::Binary: {
             if (expr->op == "&&") {
-                std::string flbl = next_label(".L_and_f"), elbl = next_label(".L_and_e");
+                std::string flbl = next_label("L_and_f"), elbl = next_label("L_and_e");
                 emit_expression(expr->left);
                 text_sec_ << "    cmp eax, 0\n    je " << flbl << "\n";
                 emit_expression(expr->right);
@@ -676,7 +770,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 return;
             }
             if (expr->op == "||") {
-                std::string tlbl = next_label(".L_or_t"), elbl = next_label(".L_or_e");
+                std::string tlbl = next_label("L_or_t"), elbl = next_label("L_or_e");
                 emit_expression(expr->left);
                 text_sec_ << "    cmp eax, 0\n    jne " << tlbl << "\n";
                 emit_expression(expr->right);
@@ -684,18 +778,18 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 return;
             }
             emit_expression(expr->left); text_sec_ << "    push rax\n";
-            emit_expression(expr->right); text_sec_ << "    mov ebx, eax\n    pop rax\n";
-            if (expr->op == "+") text_sec_ << "    add eax, ebx\n";
-            else if (expr->op == "-") text_sec_ << "    sub eax, ebx\n";
-            else if (expr->op == "*") text_sec_ << "    imul eax, ebx\n";
+            emit_expression(expr->right); text_sec_ << "    mov rbx, rax\n    pop rax\n";
+            if (expr->op == "+") text_sec_ << "    add rax, rbx\n";
+            else if (expr->op == "-") text_sec_ << "    sub rax, rbx\n";
+            else if (expr->op == "*") text_sec_ << "    imul rax, rbx\n";
             else if (expr->op == "/") text_sec_ << "    cdq\n    idiv ebx\n";
             else if (expr->op == "%") text_sec_ << "    cdq\n    idiv ebx\n    mov eax, edx\n";
-            else if (expr->op == "==") text_sec_ << "    cmp eax, ebx\n    sete al\n    movzx eax, al\n";
-            else if (expr->op == "!=") text_sec_ << "    cmp eax, ebx\n    setne al\n    movzx eax, al\n";
-            else if (expr->op == "<")  text_sec_ << "    cmp eax, ebx\n    setl al\n    movzx eax, al\n";
-            else if (expr->op == "<=") text_sec_ << "    cmp eax, ebx\n    setle al\n    movzx eax, al\n";
-            else if (expr->op == ">")  text_sec_ << "    cmp eax, ebx\n    setg al\n    movzx eax, al\n";
-            else if (expr->op == ">=") text_sec_ << "    cmp eax, ebx\n    setge al\n    movzx eax, al\n";
+            else if (expr->op == "==") text_sec_ << "    cmp rax, rbx\n    sete al\n    movzx eax, al\n";
+            else if (expr->op == "!=") text_sec_ << "    cmp rax, rbx\n    setne al\n    movzx eax, al\n";
+            else if (expr->op == "<")  text_sec_ << "    cmp rax, rbx\n    setl al\n    movzx eax, al\n";
+            else if (expr->op == "<=") text_sec_ << "    cmp rax, rbx\n    setle al\n    movzx eax, al\n";
+            else if (expr->op == ">")  text_sec_ << "    cmp rax, rbx\n    setg al\n    movzx eax, al\n";
+            else if (expr->op == ">=") text_sec_ << "    cmp rax, rbx\n    setge al\n    movzx eax, al\n";
             break;
         }
         case ExprKind::Call: {
@@ -726,7 +820,13 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             }
 
             if (expr->left && expr->left->kind == ExprKind::Identifier) {
-                text_sec_ << "    call " << expr->left->raw_text << "\n";
+                std::string callee = std::string(expr->left->raw_text);
+                if (!expr->generic_args.empty() && callee.find("__") == std::string::npos) {
+                    for (auto* a : expr->generic_args) {
+                        callee += "__" + TypeChecker::get_type_name(a);
+                    }
+                }
+                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
             }
             break;
         }

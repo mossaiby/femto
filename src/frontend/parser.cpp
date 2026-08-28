@@ -1,5 +1,6 @@
 #include "frontend/parser.hpp"
 #include <cstring>
+#include <cctype>
 
 namespace femto {
 
@@ -27,6 +28,91 @@ int Parser::get_binary_precedence(TokenKind kind) {
     }
 }
 
+bool Parser::is_generic_type_start() {
+    if (current_.kind != TokenKind::Identifier || peek_token_.kind != TokenKind::Lt) {
+        return false;
+    }
+    std::string_view src = lexer_.source();
+    uint32_t pos = peek_token_.span.start.offset;
+    if (pos >= src.size() || src[pos] != '<') return false;
+
+    int depth = 0;
+    while (pos < src.size()) {
+        char c = src[pos];
+        if (c == '<') {
+            depth++;
+        } else if (c == '>') {
+            depth--;
+            if (depth == 0) {
+                pos++; // past '>'
+                while (pos < src.size()) {
+                    if (std::isspace(static_cast<unsigned char>(src[pos]))) {
+                        pos++;
+                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '/') {
+                        while (pos < src.size() && src[pos] != '\n') pos++;
+                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '*') {
+                        pos += 2;
+                        while (pos + 1 < src.size() && !(src[pos] == '*' && src[pos + 1] == '/')) pos++;
+                        if (pos + 1 < src.size()) pos += 2;
+                    } else {
+                        break;
+                    }
+                }
+                if (pos < src.size()) {
+                    char next_c = src[pos];
+                    if (next_c == '(') {
+                        return false; // Generic call: func<T>(...)
+                    }
+                    if (std::isalpha(static_cast<unsigned char>(next_c)) || next_c == '_' || next_c == '*' || next_c == '[') {
+                        return true; // Generic type: Array<T> var
+                    }
+                }
+                return false;
+            }
+        }
+        pos++;
+    }
+    return false;
+}
+
+bool Parser::is_generic_call_at(uint32_t lt_offset) {
+    std::string_view src = lexer_.source();
+    uint32_t pos = lt_offset;
+    if (pos >= src.size() || src[pos] != '<') return false;
+
+    int depth = 0;
+    while (pos < src.size()) {
+        char c = src[pos];
+        if (c == '<') {
+            depth++;
+        } else if (c == '>') {
+            depth--;
+            if (depth == 0) {
+                pos++; // past '>'
+                while (pos < src.size()) {
+                    if (std::isspace(static_cast<unsigned char>(src[pos]))) {
+                        pos++;
+                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '/') {
+                        while (pos < src.size() && src[pos] != '\n') pos++;
+                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '*') {
+                        pos += 2;
+                        while (pos + 1 < src.size() && !(src[pos] == '*' && src[pos + 1] == '/')) pos++;
+                        if (pos + 1 < src.size()) pos += 2;
+                    } else {
+                        break;
+                    }
+                }
+                if (pos < src.size() && src[pos] == '(') {
+                    return true;
+                }
+                return false;
+            }
+        }
+        pos++;
+    }
+    return false;
+}
+
 ASTType* Parser::parse_type() {
     SourceSpan start_span = current_.span;
     if (match(TokenKind::Bang)) {
@@ -50,6 +136,13 @@ ASTType* Parser::parse_type() {
         base_ty = arena_.allocate<ASTType>();
         base_ty->kind = TypeKind::Primitive;
         base_ty->primitive_kind = t.kind;
+        base_ty->span = t.span;
+    } else if (current_.kind == TokenKind::KwVoid) {
+        Token t = current_;
+        advance();
+        base_ty = arena_.allocate<ASTType>();
+        base_ty->kind = TypeKind::Primitive;
+        base_ty->primitive_kind = TokenKind::KwVoid;
         base_ty->span = t.span;
     } else if (current_.kind == TokenKind::Identifier) {
         Token id = current_;
@@ -256,23 +349,20 @@ ASTExpr* Parser::parse_primary_expression() {
         Token id = current_;
         advance();
 
-        // Support Scoped Identifier / Enum Variant Access: Enum::variant
-        if (match(TokenKind::DoubleColon)) {
+        std::string q_name = std::string(id.text);
+        while (match(TokenKind::DoubleColon)) {
             Token member = expect(TokenKind::Identifier, "expected identifier after '::'");
-            std::string q_name = std::string(id.text) + "::" + std::string(member.text);
-            char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
-            std::memcpy(q_buf, q_name.data(), q_name.size());
-            q_buf[q_name.size()] = '\0';
-            
-            ASTExpr* e = arena_.allocate<ASTExpr>();
-            e->kind = ExprKind::Identifier;
-            e->raw_text = std::string_view(q_buf, q_name.size());
-            e->span = id.span.merge(member.span);
-            return e;
+            q_name += "::" + std::string(member.text);
         }
 
-        // Generic Call: max<int32>(3, 7)
-        if (match(TokenKind::Lt)) {
+        char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
+        std::memcpy(q_buf, q_name.data(), q_name.size());
+        q_buf[q_name.size()] = '\0';
+        std::string_view full_id(q_buf, q_name.size());
+
+        // Generic Call: max<int32>(3, 7) or array_create<int32>(8)
+        if (current_.kind == TokenKind::Lt && is_generic_call_at(current_.span.start.offset)) {
+            advance(); // consume '<'
             std::vector<ASTType*> g_args;
             if (current_.kind != TokenKind::Gt) {
                 do {
@@ -286,7 +376,7 @@ ASTExpr* Parser::parse_primary_expression() {
             call->kind = ExprKind::Call;
             ASTExpr* callee = arena_.allocate<ASTExpr>();
             callee->kind = ExprKind::Identifier;
-            callee->raw_text = id.text;
+            callee->raw_text = full_id;
             call->left = callee;
             call->generic_args = std::move(g_args);
 
@@ -301,7 +391,7 @@ ASTExpr* Parser::parse_primary_expression() {
 
         ASTExpr* e = arena_.allocate<ASTExpr>();
         e->kind = ExprKind::Identifier;
-        e->raw_text = id.text;
+        e->raw_text = full_id;
         e->span = span;
         return e;
     }
@@ -456,6 +546,43 @@ ASTProgram Parser::parse_program() {
 }
 
 void Parser::parse_top_level_declaration(ASTProgram& prog, bool is_exported) {
+    // 0. import std::io; or import std::io as io;
+    if (match(TokenKind::KwImport)) {
+        Token base = expect(TokenKind::Identifier, "expected module name after import");
+        std::string mod_path = std::string(base.text);
+        while (match(TokenKind::DoubleColon)) {
+            Token sub = expect(TokenKind::Identifier, "expected submodule name after '::'");
+            mod_path += "/" + std::string(sub.text);
+        }
+        if (current_.kind == TokenKind::Identifier && current_.text == "as") {
+            advance();
+            expect(TokenKind::Identifier, "expected alias name after 'as'");
+        }
+        expect(TokenKind::Semicolon, "expected ';' after import");
+        prog.imports.push_back(mod_path);
+        return;
+    }
+
+    // 1. extern "C" { ... } or extern "C" fn :: ...;
+    if (match(TokenKind::KwExtern)) {
+        expect(TokenKind::StringLiteral, "expected \"C\" after extern");
+        if (match(TokenKind::LBrace)) {
+            while (current_.kind != TokenKind::RBrace && current_.kind != TokenKind::Eof) {
+                Token name_tok = expect(TokenKind::Identifier, "expected function name in extern block");
+                expect(TokenKind::DoubleColon, "expected '::' after identifier");
+                prog.functions.push_back(parse_function_decl(name_tok.text, {}, false, /*is_extern_c=*/true));
+                match(TokenKind::Semicolon);
+            }
+            expect(TokenKind::RBrace, "expected '}' closing extern block");
+        } else {
+            Token name_tok = expect(TokenKind::Identifier, "expected function name");
+            expect(TokenKind::DoubleColon, "expected '::'");
+            prog.functions.push_back(parse_function_decl(name_tok.text, {}, false, /*is_extern_c=*/true));
+            match(TokenKind::Semicolon);
+        }
+        return;
+    }
+
     if (current_.kind == TokenKind::Identifier) {
         Token name_tok = current_;
         advance();
@@ -487,10 +614,19 @@ void Parser::parse_top_level_declaration(ASTProgram& prog, bool is_exported) {
         expect(TokenKind::LParen, "expected '(' after #if");
         ASTExpr* cond = parse_expression();
         expect(TokenKind::RParen, "expected ')'");
-        std::vector<ASTStmt*> then_block = parse_block();
-        std::vector<ASTStmt*> else_block;
+        expect(TokenKind::LBrace, "expected '{'");
+        while (current_.kind != TokenKind::RBrace && current_.kind != TokenKind::Eof) {
+            bool exp = match(TokenKind::HashExport);
+            parse_top_level_declaration(prog, exp);
+        }
+        expect(TokenKind::RBrace, "expected '}'");
         if (match(TokenKind::HashElse)) {
-            else_block = parse_block();
+            expect(TokenKind::LBrace, "expected '{'");
+            while (current_.kind != TokenKind::RBrace && current_.kind != TokenKind::Eof) {
+                bool exp = match(TokenKind::HashExport);
+                parse_top_level_declaration(prog, exp);
+            }
+            expect(TokenKind::RBrace, "expected '}'");
         }
     } else {
         diag_.report_error(current_.span, "expected top-level declaration");
@@ -507,11 +643,12 @@ ASTConstDecl* Parser::parse_const_decl(std::string_view name, bool is_exported) 
     return c;
 }
 
-ASTFunctionDecl* Parser::parse_function_decl(std::string_view name, std::vector<std::string_view> generic_params, bool is_exported) {
+ASTFunctionDecl* Parser::parse_function_decl(std::string_view name, std::vector<std::string_view> generic_params, bool is_exported, bool is_extern_c) {
     auto* fn = arena_.allocate<ASTFunctionDecl>();
     fn->name = name;
     fn->generic_params = std::move(generic_params);
     fn->is_exported = is_exported;
+    fn->is_extern_c = is_extern_c;
     fn->span = current_.span;
 
     expect(TokenKind::LParen, "expected '(' for parameter list");
@@ -530,6 +667,11 @@ ASTFunctionDecl* Parser::parse_function_decl(std::string_view name, std::vector<
     expect(TokenKind::RParen, "expected ')'");
     expect(TokenKind::Arrow, "expected '->' specifying return type");
     fn->return_type = parse_type();
+    
+    if (is_extern_c) {
+        return fn;
+    }
+    
     fn->body = parse_block();
     return fn;
 }
@@ -626,13 +768,14 @@ ASTStmt* Parser::parse_statement() {
     }
 
     // 2. Custom type variable declarations (e.g. Point p = ...; or Point* ptr = ...; or Pair<int32, int32> p = ...;)
-    if (current_.kind == TokenKind::Identifier && 
-        (peek_token_.kind == TokenKind::Identifier || peek_token_.kind == TokenKind::Star || peek_token_.kind == TokenKind::Lt)) {
-        ASTType* ty = parse_type();
-        return parse_var_decl_stmt(ty);
+    if (current_.kind == TokenKind::Identifier) {
+        if (peek_token_.kind == TokenKind::Identifier || peek_token_.kind == TokenKind::Star || is_generic_type_start()) {
+            ASTType* ty = parse_type();
+            return parse_var_decl_stmt(ty);
+        }
     }
 
-    // 3. Otherwise, parse as generalized expression / assignment / result branch
+    // 3. Otherwise, parse as generalized expression / generic function call / assignment / result branch
     ASTExpr* lval = parse_expression();
 
     // Result Branch Statement: expr ?? (T val) { ... } : (int32 code) { ... };
@@ -642,7 +785,7 @@ ASTStmt* Parser::parse_statement() {
         s->condition = lval;
 
         expect(TokenKind::LParen, "expected '(' for success variable");
-        parse_type(); // skip type
+        parse_type();
         Token s_var = expect(TokenKind::Identifier, "expected success variable name");
         s->success_var = s_var.text;
         expect(TokenKind::RParen, "expected ')'");
@@ -650,7 +793,7 @@ ASTStmt* Parser::parse_statement() {
 
         expect(TokenKind::Colon, "expected ':' separating result branch");
         expect(TokenKind::LParen, "expected '(' for failure variable");
-        parse_type(); // skip type
+        parse_type();
         Token f_var = expect(TokenKind::Identifier, "expected failure variable name");
         s->failure_var = f_var.text;
         expect(TokenKind::RParen, "expected ')'");

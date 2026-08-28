@@ -4,12 +4,38 @@ project(femtoc CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Include directory for compiler headers
 include_directories(src)
 
+# Path to the runtime assembly source and output object
+set(RUNTIME_ASM ${CMAKE_CURRENT_SOURCE_DIR}/runtime/femto_rt.asm)
+set(RUNTIME_OBJ ${CMAKE_CURRENT_BINARY_DIR}/femto_rt.o)
+
+# Assemble femto_rt.asm using NASM
+add_custom_command(
+    OUTPUT ${RUNTIME_OBJ}
+    COMMAND nasm -f elf64 ${RUNTIME_ASM} -o ${RUNTIME_OBJ}
+    DEPENDS ${RUNTIME_ASM}
+    COMMENT "Assembling Femto runtime: ${RUNTIME_ASM}"
+)
+
+# Custom target ensuring femto_rt.o is always built
+add_custom_target(femto_runtime ALL DEPENDS ${RUNTIME_OBJ})
+
+# Main compiler executable
 add_executable(femtoc
     src/main.cpp
     src/frontend/lexer.cpp
     src/frontend/parser.cpp
     src/sema/type_checker.cpp
     src/codegen/nasm_emitter.cpp
+)
+
+# Make compiler binary depend on runtime object build
+add_dependencies(femtoc femto_runtime)
+
+# Inject stdlib and runtime paths directly into the compiler binary
+target_compile_definitions(femtoc PRIVATE
+    FEMTO_RUNTIME_OBJ="${RUNTIME_OBJ}"
+    FEMTO_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
 )

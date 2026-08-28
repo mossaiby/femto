@@ -1,0 +1,11 @@
+import std::builtin;
+
+#export
+exit :: (int32 code) -> void {
+    __builtin_exit(code);
+}
+
+#export
+panic :: (int64 ptr, uint64 len) -> void {
+    __builtin_panic(ptr, len);
+}

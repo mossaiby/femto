@@ -45,14 +45,16 @@ private:
         return current_;
     }
 
+    // Top-Level Declarations
     void parse_top_level_declaration(ASTProgram& prog, bool is_exported = false);
-    ASTFunctionDecl* parse_function_decl(std::string_view name, std::vector<std::string_view> generic_params, bool is_exported);
+    ASTFunctionDecl* parse_function_decl(std::string_view name, std::vector<std::string_view> generic_params, bool is_exported, bool is_extern_c = false);
     ASTStructDecl* parse_struct_decl(std::string_view name, bool is_exported);
     ASTEnumDecl* parse_enum_decl(std::string_view name, bool is_exported);
     ASTConstDecl* parse_const_decl(std::string_view name, bool is_exported);
 
     ASTType* parse_type();
 
+    // Statements
     ASTStmt* parse_statement();
     ASTStmt* parse_var_decl_stmt(ASTType* type_annot);
     ASTStmt* parse_if_stmt();
@@ -65,9 +67,13 @@ private:
     ASTStmt* parse_hash_if_stmt();
     std::vector<ASTStmt*> parse_block();
 
+    // Expressions (Pratt Parser)
     ASTExpr* parse_expression(int min_precedence = 0);
     ASTExpr* parse_primary_expression();
     int get_binary_precedence(TokenKind kind);
+
+    bool is_generic_type_start();
+    bool is_generic_call_at(uint32_t lt_offset);
 };
 
 } // namespace femto
