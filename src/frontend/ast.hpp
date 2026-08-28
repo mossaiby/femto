@@ -31,7 +31,8 @@ struct ASTType {
 enum class ExprKind {
     Literal, Identifier, Binary, Unary, PostfixUnwrap,
     Cast, LossyCast, Bitcast, Match, Call, MemberAccess,
-    Index, SliceSubrange, StructLiteral, ArrayLiteral, Subject
+    Index, SliceSubrange, StructLiteral, ArrayLiteral, Subject,
+    BuiltinSizeof, BuiltinAlignof, BuiltinBitcast
 };
 
 struct ASTMatchArm {
@@ -50,6 +51,7 @@ struct ASTExpr {
     ASTExpr* right = nullptr;
     std::string_view op;
     ASTType* target_type = nullptr;
+    std::vector<ASTType*> generic_args;
     std::vector<ASTExpr*> args;
     std::vector<std::pair<std::string_view, ASTExpr*>> struct_fields;
     std::vector<ASTMatchArm> match_arms;
@@ -58,7 +60,8 @@ struct ASTExpr {
 enum class StmtKind {
     VarDecl, ConstDecl, Assignment, CompoundAssignment,
     Increment, Decrement, If, While, DoWhile, Switch,
-    Foreach, Break, Continue, Return, ResultBranch, ExprStmt
+    Foreach, Break, Continue, Return, ResultBranch, ExprStmt,
+    HashIf
 };
 
 struct ASTSwitchCase {
@@ -93,7 +96,6 @@ struct ASTStmt {
     ASTType* iter_type = nullptr;
     ASTExpr* iter_collection = nullptr;
 
-    // Multi-level break/continue
     uint32_t loop_levels = 1;
 
     // Result Branch
@@ -150,10 +152,19 @@ struct ASTEnumDecl {
     SourceSpan span;
 };
 
+struct ASTConstDecl {
+    std::string_view name;
+    ASTType* type_annot = nullptr;
+    ASTExpr* init_expr = nullptr;
+    bool is_exported = false;
+    SourceSpan span;
+};
+
 struct ASTProgram {
     std::vector<ASTFunctionDecl*> functions;
     std::vector<ASTStructDecl*> structs;
     std::vector<ASTEnumDecl*> enums;
+    std::vector<ASTConstDecl*> constants;
 };
 
 } // namespace femto

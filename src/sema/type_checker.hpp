@@ -6,6 +6,7 @@
 #include <variant>
 #include "frontend/ast.hpp"
 #include "common/diagnostic.hpp"
+#include "common/arena.hpp"
 
 namespace femto {
 
@@ -44,7 +45,7 @@ struct SemaType {
 
 class TypeChecker {
 public:
-    TypeChecker(Diagnostics& diag) : diag_(diag) {}
+    TypeChecker(Arena& arena, Diagnostics& diag) : arena_(arena), diag_(diag) {}
 
     bool check_program(ASTProgram& prog);
 
@@ -52,17 +53,33 @@ public:
     bool check_type_compatibility(SemaType* expected, SemaType* actual, SourceSpan span);
 
     const std::unordered_map<std::string, SemaType*>& type_env() const { return type_env_; }
+    const std::unordered_map<std::string, std::unordered_map<std::string, int64_t>>& enum_defs() const { return enum_defs_; }
+    const std::unordered_map<std::string, int64_t>& const_defs() const { return const_defs_; }
 
 private:
+    Arena& arena_;
     Diagnostics& diag_;
     std::unordered_map<std::string, SemaType*> type_env_;
+    std::unordered_map<std::string, std::unordered_map<std::string, int64_t>> enum_defs_;
+    std::unordered_map<std::string, int64_t> const_defs_;
     std::unordered_map<std::string, SemaType*> symbol_table_;
+    std::unordered_map<std::string, ASTStructDecl*> generic_structs_;
+    std::unordered_map<std::string, ASTFunctionDecl*> generic_functions_;
     uint32_t current_loop_depth_ = 0;
 
     void init_primitives();
-    void compute_struct_layout(ASTStructDecl* decl);
-    void check_statement(ASTStmt* stmt, SemaType* return_type);
-    SemaType* check_expression(ASTExpr* expr);
+    void compute_struct_layout(ASTStructDecl* decl, std::string custom_name = "");
+    void check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgram& prog);
+    SemaType* check_expression(ASTExpr* expr, ASTProgram& prog);
+
+    int64_t eval_const_expr(ASTExpr* expr);
+
+    // Monomorphization
+    std::string monomorphize_struct(ASTType* generic_ty);
+    std::string monomorphize_function(ASTExpr* call_expr, ASTProgram& prog);
+    ASTType* clone_and_substitute_type(ASTType* ty, const std::unordered_map<std::string, ASTType*>& subst);
+    ASTExpr* clone_and_substitute_expr(ASTExpr* expr, const std::unordered_map<std::string, ASTType*>& subst);
+    ASTStmt* clone_and_substitute_stmt(ASTStmt* stmt, const std::unordered_map<std::string, ASTType*>& subst);
 };
 
 } // namespace femto

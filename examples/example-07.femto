@@ -1,0 +1,62 @@
+// 1. Compile-Time Constants
+BUFFER_SIZE :: 1024;
+DEBUG_MODE  :: 1;
+
+// 2. Generic Struct
+Pair :: struct <K, V> {
+    K key;
+    V value;
+}
+
+// 3. Generic Function
+max :: <T>(T a, T b) -> T {
+    if (a > b) then {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+#export
+test_generics :: () -> int32 {
+    // Monomorphizes max<int32>
+    int32 m = max<int32>(45, 82); // 82
+
+    // Monomorphizes Pair<int32, int32>
+    Pair<int32, int32> p = { .key = 18, .value = 82 };
+
+    if (m == p.value) then {
+        return p.key + p.value; // 18 + 82 = 100
+    }
+    return 0;
+}
+
+#export
+test_builtins_and_consts :: () -> int32 {
+    // Compile-time builtins
+    int32 sz = @sizeof(Pair<int32, int32>); // 8 bytes
+    int32 al = @alignof(int32);             // 4 bytes
+
+    // Static conditional compilation
+    int32 branch_val = 0;
+    #if (DEBUG_MODE == 1) {
+        branch_val = 10;
+    } #else {
+        branch_val = 999;
+    }
+
+    // 8 + 4 + 10 = 22
+    return sz + al + branch_val;
+}
+
+#export
+main :: () -> int32 {
+    int32 g = test_generics();            // 100
+    int32 b = test_builtins_and_consts(); // 22
+
+    if (g == 100 && b == 22) then {
+        return 122; // All Phase 5 checks passed!
+    } else {
+        return 1;
+    }
+}

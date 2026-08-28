@@ -16,6 +16,10 @@ public:
         return ::new (mem) T(std::forward<Args>(args)...);
     }
 
+    void* allocate_bytes(size_t bytes, size_t alignment = 1) {
+        return pool_.allocate(bytes, alignment);
+    }
+
     std::pmr::memory_resource* resource() { return &pool_; }
 
 private:

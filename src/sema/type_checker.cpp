@@ -1,4 +1,5 @@
 #include "sema/type_checker.hpp"
+#include <cstring>
 
 namespace femto {
 
@@ -22,9 +23,9 @@ void TypeChecker::init_primitives() {
     type_env_["char8"]   = make_prim(TokenKind::KwChar8, 1);
 }
 
-void TypeChecker::compute_struct_layout(ASTStructDecl* decl) {
+void TypeChecker::compute_struct_layout(ASTStructDecl* decl, std::string custom_name) {
     StructTypeInfo info;
-    info.name = std::string(decl->name);
+    info.name = custom_name.empty() ? std::string(decl->name) : custom_name;
 
     uint32_t offset = 0;
     uint32_t max_align = 1;
@@ -52,7 +53,174 @@ void TypeChecker::compute_struct_layout(ASTStructDecl* decl) {
     if (total_size == 0) total_size = 1;
 
     auto* st = new SemaType{SemaType::Kind::Struct, total_size, max_align, info};
-    type_env_[std::string(decl->name)] = st;
+    type_env_[info.name] = st;
+}
+
+std::string TypeChecker::monomorphize_struct(ASTType* generic_ty) {
+    std::string mangled = std::string(generic_ty->custom_name);
+    for (auto* a : generic_ty->generic_args) {
+        mangled += "__" + std::string(a->custom_name.empty() ? "int32" : a->custom_name);
+    }
+
+    if (type_env_.find(mangled) != type_env_.end()) {
+        return mangled;
+    }
+
+    auto it = generic_structs_.find(std::string(generic_ty->custom_name));
+    if (it == generic_structs_.end()) return mangled;
+
+    ASTStructDecl* orig = it->second;
+    std::unordered_map<std::string, ASTType*> subst;
+    for (size_t i = 0; i < orig->generic_params.size() && i < generic_ty->generic_args.size(); ++i) {
+        subst[std::string(orig->generic_params[i])] = generic_ty->generic_args[i];
+    }
+
+    auto* concrete_decl = arena_.allocate<ASTStructDecl>();
+    concrete_decl->name = generic_ty->custom_name;
+    for (auto& f : orig->fields) {
+        ASTStructField cf;
+        cf.name = f.name;
+        cf.type = clone_and_substitute_type(f.type, subst);
+        cf.default_value = f.default_value;
+        concrete_decl->fields.push_back(cf);
+    }
+
+    compute_struct_layout(concrete_decl, mangled);
+    return mangled;
+}
+
+std::string TypeChecker::monomorphize_function(ASTExpr* call_expr, ASTProgram& prog) {
+    std::string orig_name = std::string(call_expr->left->raw_text);
+    std::string mangled = orig_name;
+    for (auto* a : call_expr->generic_args) {
+        mangled += "__" + std::string(a->custom_name.empty() ? "int32" : a->custom_name);
+    }
+
+    // Check if already monomorphized
+    for (auto* fn : prog.functions) {
+        if (fn->name == mangled) {
+            call_expr->left->raw_text = fn->name;
+            return mangled;
+        }
+    }
+
+    auto it = generic_functions_.find(orig_name);
+    if (it == generic_functions_.end()) return orig_name;
+
+    ASTFunctionDecl* orig_fn = it->second;
+    std::unordered_map<std::string, ASTType*> subst;
+    for (size_t i = 0; i < orig_fn->generic_params.size() && i < call_expr->generic_args.size(); ++i) {
+        subst[std::string(orig_fn->generic_params[i])] = call_expr->generic_args[i];
+    }
+
+    char* m_buf = (char*)arena_.allocate_bytes(mangled.size() + 1, 1);
+    std::memcpy(m_buf, mangled.data(), mangled.size());
+    m_buf[mangled.size()] = '\0';
+    std::string_view mangled_sv(m_buf, mangled.size());
+
+    auto* concrete_fn = arena_.allocate<ASTFunctionDecl>();
+    concrete_fn->name = mangled_sv;
+    concrete_fn->is_exported = orig_fn->is_exported;
+    concrete_fn->return_type = clone_and_substitute_type(orig_fn->return_type, subst);
+
+    for (auto& p : orig_fn->params) {
+        ASTParam cp;
+        cp.name = p.name;
+        cp.type = clone_and_substitute_type(p.type, subst);
+        concrete_fn->params.push_back(cp);
+    }
+
+    for (auto* s : orig_fn->body) {
+        concrete_fn->body.push_back(clone_and_substitute_stmt(s, subst));
+    }
+
+    prog.functions.push_back(concrete_fn);
+    call_expr->left->raw_text = mangled_sv;
+    return mangled;
+}
+
+ASTType* TypeChecker::clone_and_substitute_type(ASTType* ty, const std::unordered_map<std::string, ASTType*>& subst) {
+    if (!ty) return nullptr;
+    if (ty->kind == TypeKind::Custom) {
+        auto it = subst.find(std::string(ty->custom_name));
+        if (it != subst.end()) {
+            return it->second;
+        }
+    }
+    auto* ct = arena_.allocate<ASTType>();
+    *ct = *ty;
+    if (ty->pointee_or_element) {
+        ct->pointee_or_element = clone_and_substitute_type(ty->pointee_or_element, subst);
+    }
+    ct->generic_args.clear();
+    for (auto* a : ty->generic_args) {
+        ct->generic_args.push_back(clone_and_substitute_type(a, subst));
+    }
+    return ct;
+}
+
+ASTExpr* TypeChecker::clone_and_substitute_expr(ASTExpr* expr, const std::unordered_map<std::string, ASTType*>& subst) {
+    if (!expr) return nullptr;
+    auto* ce = arena_.allocate<ASTExpr>();
+    *ce = *expr;
+    ce->left = clone_and_substitute_expr(expr->left, subst);
+    ce->right = clone_and_substitute_expr(expr->right, subst);
+    if (expr->target_type) {
+        ce->target_type = clone_and_substitute_type(expr->target_type, subst);
+    }
+    ce->args.clear();
+    for (auto* a : expr->args) ce->args.push_back(clone_and_substitute_expr(a, subst));
+    return ce;
+}
+
+ASTStmt* TypeChecker::clone_and_substitute_stmt(ASTStmt* stmt, const std::unordered_map<std::string, ASTType*>& subst) {
+    if (!stmt) return nullptr;
+    auto* cs = arena_.allocate<ASTStmt>();
+    *cs = *stmt;
+    if (stmt->type_annot) cs->type_annot = clone_and_substitute_type(stmt->type_annot, subst);
+    cs->init_expr = clone_and_substitute_expr(stmt->init_expr, subst);
+    cs->target_expr = clone_and_substitute_expr(stmt->target_expr, subst);
+    cs->value_expr = clone_and_substitute_expr(stmt->value_expr, subst);
+    cs->condition = clone_and_substitute_expr(stmt->condition, subst);
+    cs->then_block.clear();
+    for (auto* s : stmt->then_block) cs->then_block.push_back(clone_and_substitute_stmt(s, subst));
+    cs->else_block.clear();
+    for (auto* s : stmt->else_block) cs->else_block.push_back(clone_and_substitute_stmt(s, subst));
+    return cs;
+}
+
+int64_t TypeChecker::eval_const_expr(ASTExpr* expr) {
+    if (!expr) return 0;
+    if (expr->kind == ExprKind::Literal) {
+        return std::stoll(std::string(expr->raw_text));
+    }
+    if (expr->kind == ExprKind::Identifier) {
+        auto it = const_defs_.find(std::string(expr->raw_text));
+        if (it != const_defs_.end()) return it->second;
+    }
+    if (expr->kind == ExprKind::BuiltinSizeof && expr->target_type) {
+        auto* ty = resolve_ast_type(expr->target_type);
+        return ty ? ty->size_bytes : 4;
+    }
+    if (expr->kind == ExprKind::BuiltinAlignof && expr->target_type) {
+        auto* ty = resolve_ast_type(expr->target_type);
+        return ty ? ty->align_bytes : 4;
+    }
+    if (expr->kind == ExprKind::Binary) {
+        int64_t l = eval_const_expr(expr->left);
+        int64_t r = eval_const_expr(expr->right);
+        if (expr->op == "+") return l + r;
+        if (expr->op == "-") return l - r;
+        if (expr->op == "*") return l * r;
+        if (expr->op == "/") return r != 0 ? l / r : 0;
+        if (expr->op == "==") return l == r;
+        if (expr->op == "!=") return l != r;
+        if (expr->op == "<") return l < r;
+        if (expr->op == "<=") return l <= r;
+        if (expr->op == ">") return l > r;
+        if (expr->op == ">=") return l >= r;
+    }
+    return 0;
 }
 
 SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
@@ -66,6 +234,11 @@ SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
         }
     }
     if (ast_ty->kind == TypeKind::Custom) {
+        if (!ast_ty->generic_args.empty()) {
+            std::string mangled = monomorphize_struct(ast_ty);
+            auto it = type_env_.find(mangled);
+            if (it != type_env_.end()) return it->second;
+        }
         auto it = type_env_.find(std::string(ast_ty->custom_name));
         if (it != type_env_.end()) return it->second;
     }
@@ -88,7 +261,7 @@ SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
     }
     if (ast_ty->kind == TypeKind::Result) {
         auto* payload = resolve_ast_type(ast_ty->pointee_or_element);
-        uint32_t sz = 4 + (payload ? payload->size_bytes : 0);
+        uint32_t sz = 8;
         auto* r = new SemaType{SemaType::Kind::Result, sz, 8, ResultTypeInfo{payload}};
         return r;
     }
@@ -102,56 +275,85 @@ bool TypeChecker::check_type_compatibility(SemaType* expected, SemaType* actual,
     return false;
 }
 
-void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type) {
+void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgram& prog) {
     if (!stmt) return;
     switch (stmt->kind) {
         case StmtKind::VarDecl: {
             auto* declared_t = resolve_ast_type(stmt->type_annot);
             symbol_table_[std::string(stmt->name)] = declared_t;
             if (stmt->init_expr) {
-                check_expression(stmt->init_expr);
+                check_expression(stmt->init_expr, prog);
             }
             break;
         }
         case StmtKind::Assignment:
         case StmtKind::CompoundAssignment: {
             if (stmt->target_expr) {
-                check_expression(stmt->target_expr);
+                check_expression(stmt->target_expr, prog);
             }
             if (stmt->value_expr) {
-                check_expression(stmt->value_expr);
+                check_expression(stmt->value_expr, prog);
             }
             break;
         }
         case StmtKind::Increment:
         case StmtKind::Decrement: {
             if (stmt->target_expr) {
-                check_expression(stmt->target_expr);
+                check_expression(stmt->target_expr, prog);
             }
             break;
         }
         case StmtKind::If: {
-            check_expression(stmt->condition);
-            for (auto* s : stmt->then_block) check_statement(s, return_type);
-            for (auto* s : stmt->else_block) check_statement(s, return_type);
+            check_expression(stmt->condition, prog);
+            for (auto* s : stmt->then_block) check_statement(s, return_type, prog);
+            for (auto* s : stmt->else_block) check_statement(s, return_type, prog);
+            break;
+        }
+        case StmtKind::HashIf: {
+            int64_t cond_val = eval_const_expr(stmt->condition);
+            if (cond_val != 0) {
+                for (auto* s : stmt->then_block) check_statement(s, return_type, prog);
+            } else {
+                for (auto* s : stmt->else_block) check_statement(s, return_type, prog);
+            }
             break;
         }
         case StmtKind::While:
         case StmtKind::DoWhile: {
             current_loop_depth_++;
-            check_expression(stmt->condition);
-            for (auto* s : stmt->then_block) check_statement(s, return_type);
+            check_expression(stmt->condition, prog);
+            for (auto* s : stmt->then_block) check_statement(s, return_type, prog);
             current_loop_depth_--;
             break;
         }
         case StmtKind::Switch: {
             current_loop_depth_++;
-            check_expression(stmt->condition);
+            check_expression(stmt->condition, prog);
             for (auto& sc : stmt->switch_cases) {
-                if (sc.match_val) check_expression(sc.match_val);
-                for (auto* s : sc.body) check_statement(s, return_type);
+                if (sc.match_val) check_expression(sc.match_val, prog);
+                for (auto* s : sc.body) check_statement(s, return_type, prog);
             }
             current_loop_depth_--;
+            break;
+        }
+        case StmtKind::Foreach: {
+            current_loop_depth_++;
+            check_expression(stmt->iter_collection, prog);
+            auto* item_t = resolve_ast_type(stmt->iter_type);
+            symbol_table_[std::string(stmt->iter_var)] = item_t;
+            if (!stmt->iter_idx.empty()) {
+                symbol_table_[std::string(stmt->iter_idx)] = type_env_["int32"];
+            }
+            for (auto* s : stmt->then_block) check_statement(s, return_type, prog);
+            current_loop_depth_--;
+            break;
+        }
+        case StmtKind::ResultBranch: {
+            check_expression(stmt->condition, prog);
+            symbol_table_[std::string(stmt->success_var)] = type_env_["int32"];
+            for (auto* s : stmt->success_block) check_statement(s, return_type, prog);
+            symbol_table_[std::string(stmt->failure_var)] = type_env_["int32"];
+            for (auto* s : stmt->failure_block) check_statement(s, return_type, prog);
             break;
         }
         case StmtKind::Break:
@@ -165,13 +367,13 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type) {
         }
         case StmtKind::Return: {
             if (stmt->value_expr) {
-                check_expression(stmt->value_expr);
+                check_expression(stmt->value_expr, prog);
             }
             break;
         }
         case StmtKind::ExprStmt: {
             if (stmt->value_expr) {
-                check_expression(stmt->value_expr);
+                check_expression(stmt->value_expr, prog);
             }
             break;
         }
@@ -180,19 +382,40 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type) {
     }
 }
 
-SemaType* TypeChecker::check_expression(ASTExpr* expr) {
+SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
     if (!expr) return nullptr;
 
     switch (expr->kind) {
         case ExprKind::Literal:
             return type_env_["int32"];
+        case ExprKind::Subject:
+            return type_env_["int32"];
+        case ExprKind::BuiltinSizeof:
+        case ExprKind::BuiltinAlignof:
+            return type_env_["int32"];
+        case ExprKind::BuiltinBitcast:
+            check_expression(expr->left, prog);
+            return resolve_ast_type(expr->target_type);
         case ExprKind::Identifier: {
+            auto sep = expr->raw_text.find("::");
+            if (sep != std::string_view::npos) {
+                std::string enum_name(expr->raw_text.substr(0, sep));
+                std::string var_name(expr->raw_text.substr(sep + 2));
+                auto e_it = enum_defs_.find(enum_name);
+                if (e_it != enum_defs_.end()) {
+                    return type_env_["int32"];
+                }
+            }
+            auto c_it = const_defs_.find(std::string(expr->raw_text));
+            if (c_it != const_defs_.end()) {
+                return type_env_["int32"];
+            }
             auto it = symbol_table_.find(std::string(expr->raw_text));
             if (it != symbol_table_.end()) return it->second;
             return type_env_["int32"];
         }
         case ExprKind::Unary: {
-            auto* sub = check_expression(expr->left);
+            auto* sub = check_expression(expr->left, prog);
             if (expr->op == "&" && sub) {
                 auto* pt = new SemaType{SemaType::Kind::Pointer, 8, 8, PointerTypeInfo{sub}};
                 return pt;
@@ -200,10 +423,34 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr) {
             if (expr->op == "*" && sub && sub->kind == SemaType::Kind::Pointer) {
                 return std::get<PointerTypeInfo>(sub->data).pointee;
             }
+            if (expr->op == "success") {
+                auto* r = new SemaType{SemaType::Kind::Result, 8, 8, ResultTypeInfo{sub}};
+                return r;
+            }
+            if (expr->op == "failure") {
+                auto* r = new SemaType{SemaType::Kind::Result, 8, 8, ResultTypeInfo{type_env_["int32"]}};
+                return r;
+            }
             return sub;
         }
+        case ExprKind::PostfixUnwrap: {
+            auto* sub = check_expression(expr->left, prog);
+            if (sub && sub->kind == SemaType::Kind::Result) {
+                return std::get<ResultTypeInfo>(sub->data).payload;
+            }
+            return type_env_["int32"];
+        }
+        case ExprKind::Match: {
+            check_expression(expr->left, prog);
+            for (auto& arm : expr->match_arms) {
+                if (arm.condition) check_expression(arm.condition, prog);
+                for (auto* s : arm.statements) check_statement(s, nullptr, prog);
+                if (arm.result_expr) check_expression(arm.result_expr, prog);
+            }
+            return type_env_["int32"];
+        }
         case ExprKind::MemberAccess: {
-            auto* base_t = check_expression(expr->left);
+            auto* base_t = check_expression(expr->left, prog);
             if (base_t) {
                 if (base_t->kind == SemaType::Kind::Pointer) {
                     base_t = std::get<PointerTypeInfo>(base_t->data).pointee;
@@ -222,8 +469,8 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr) {
             return type_env_["int32"];
         }
         case ExprKind::Index: {
-            auto* base_t = check_expression(expr->left);
-            check_expression(expr->right);
+            auto* base_t = check_expression(expr->left, prog);
+            check_expression(expr->right, prog);
             if (base_t) {
                 if (base_t->kind == SemaType::Kind::Array) {
                     return std::get<ArrayTypeInfo>(base_t->data).element;
@@ -238,8 +485,8 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr) {
             return type_env_["int32"];
         }
         case ExprKind::SliceSubrange: {
-            auto* base_t = check_expression(expr->left);
-            for (auto* a : expr->args) check_expression(a);
+            auto* base_t = check_expression(expr->left, prog);
+            for (auto* a : expr->args) check_expression(a, prog);
             if (base_t && base_t->kind == SemaType::Kind::Array) {
                 auto* elem = std::get<ArrayTypeInfo>(base_t->data).element;
                 auto* slice_t = new SemaType{SemaType::Kind::Slice, 16, 8, SliceTypeInfo{elem}};
@@ -249,26 +496,29 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr) {
         }
         case ExprKind::StructLiteral: {
             for (auto& sf : expr->struct_fields) {
-                check_expression(sf.second);
+                check_expression(sf.second, prog);
             }
             return type_env_["int32"];
         }
         case ExprKind::ArrayLiteral: {
             SemaType* elem_t = nullptr;
             for (auto* a : expr->args) {
-                elem_t = check_expression(a);
+                elem_t = check_expression(a, prog);
             }
             if (!elem_t) elem_t = type_env_["int32"];
             auto* arr_t = new SemaType{SemaType::Kind::Array, (uint32_t)(elem_t->size_bytes * expr->args.size()), elem_t->align_bytes, ArrayTypeInfo{elem_t, expr->args.size()}};
             return arr_t;
         }
         case ExprKind::Binary: {
-            check_expression(expr->left);
-            check_expression(expr->right);
+            check_expression(expr->left, prog);
+            check_expression(expr->right, prog);
             return type_env_["int32"];
         }
         case ExprKind::Call: {
-            for (auto* a : expr->args) check_expression(a);
+            if (!expr->generic_args.empty() && expr->left && expr->left->kind == ExprKind::Identifier) {
+                monomorphize_function(expr, prog);
+            }
+            for (auto* a : expr->args) check_expression(a, prog);
             return type_env_["int32"];
         }
         default:
@@ -279,21 +529,52 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr) {
 bool TypeChecker::check_program(ASTProgram& prog) {
     init_primitives();
 
-    for (auto* st : prog.structs) {
-        compute_struct_layout(st);
+    // 1. Constants
+    for (auto* c : prog.constants) {
+        const_defs_[std::string(c->name)] = eval_const_expr(c->init_expr);
     }
 
-    for (auto* fn : prog.functions) {
-        symbol_table_.clear();
-        current_loop_depth_ = 0;
-        for (auto& p : fn->params) {
-            symbol_table_[std::string(p.name)] = resolve_ast_type(p.type);
-        }
-        auto* ret_type = resolve_ast_type(fn->return_type);
-        for (auto* stmt : fn->body) {
-            check_statement(stmt, ret_type);
+    // 2. Enums
+    for (auto* e : prog.enums) {
+        for (auto& v : e->variants) {
+            enum_defs_[std::string(e->name)][std::string(v.name)] = v.value.value_or(0);
         }
     }
+
+    // 3. Collect Generic Templates vs Concrete Structs
+    for (auto* st : prog.structs) {
+        if (!st->generic_params.empty()) {
+            generic_structs_[std::string(st->name)] = st;
+        } else {
+            compute_struct_layout(st);
+        }
+    }
+
+    // 4. Collect Generic Functions
+    for (auto* fn : prog.functions) {
+        if (!fn->generic_params.empty()) {
+            generic_functions_[std::string(fn->name)] = fn;
+        }
+    }
+
+    // 5. Typecheck Functions
+    size_t i = 0;
+    while (i < prog.functions.size()) {
+        auto* fn = prog.functions[i];
+        if (fn->generic_params.empty()) {
+            symbol_table_.clear();
+            current_loop_depth_ = 0;
+            for (auto& p : fn->params) {
+                symbol_table_[std::string(p.name)] = resolve_ast_type(p.type);
+            }
+            auto* ret_type = resolve_ast_type(fn->return_type);
+            for (auto* stmt : fn->body) {
+                check_statement(stmt, ret_type, prog);
+            }
+        }
+        i++;
+    }
+
     return !diag_.has_errors();
 }
 

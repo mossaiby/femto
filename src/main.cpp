@@ -45,13 +45,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    femto::TypeChecker checker(diag);
+    femto::TypeChecker checker(arena, diag);
     if (!checker.check_program(prog)) {
         std::cerr << "Compilation aborted due to semantic errors.\n";
         return 1;
     }
 
-    femto::NasmEmitter emitter(checker.type_env());
+    femto::NasmEmitter emitter(checker.type_env(), checker.enum_defs(), checker.const_defs());
     std::string asm_code = emitter.generate_assembly(prog);
 
     std::string asm_path = input_path + ".asm";
