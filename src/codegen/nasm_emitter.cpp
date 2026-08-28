@@ -21,7 +21,7 @@ static int64_t parse_literal_int_emitter(std::string_view raw) {
     return std::stoll(s, nullptr, 0);
 }
 
-static std::string sanitize_nasm_identifier(std::string_view name) {
+static std::string sanitize_symbol_raw(std::string_view name) {
     std::string s;
     for (size_t i = 0; i < name.size(); ++i) {
         if (name[i] == ':' && i + 1 < name.size() && name[i + 1] == ':') {
@@ -32,6 +32,26 @@ static std::string sanitize_nasm_identifier(std::string_view name) {
         } else {
             s.push_back(name[i]);
         }
+    }
+    return s;
+}
+
+static std::string sanitize_nasm_identifier(std::string_view name) {
+    std::string s = sanitize_symbol_raw(name);
+
+    // Prefix NASM reserved keywords, operators, and register names with '$' in operand positions
+    static const std::unordered_set<std::string> nasm_keywords = {
+        "abs", "fabs", "rel", "seg", "wrt", "strict", "default", "nosplit",
+        "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+        "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp",
+        "ax", "bx", "cx", "dx", "si", "di", "bp", "sp",
+        "al", "ah", "bl", "bh", "cl", "ch", "dl", "dh",
+        "byte", "word", "dword", "qword", "tword", "oword", "yword", "zword"
+    };
+
+    if (nasm_keywords.count(s)) {
+        return "$" + s;
     }
     return s;
 }
@@ -112,6 +132,7 @@ SemaType* NasmEmitter::resolve_type_node(ASTType* ast_ty) {
 }
 
 std::string NasmEmitter::generate_assembly(const ASTProgram& program) {
+    current_program_ = &program;
     text_sec_   << "default rel\nsection .text\n";
     rodata_sec_ << "section .rodata\n";
     rodata_sec_ << "str_bounds_panic: db \"Femto panic: Slice index out of bounds\", 10, 0\n";
@@ -120,7 +141,12 @@ std::string NasmEmitter::generate_assembly(const ASTProgram& program) {
     std::unordered_set<std::string> extern_declared;
     for (const auto* fn : program.functions) {
         if (fn->is_extern_c) {
-            std::string ext_name = sanitize_nasm_identifier(fn->name);
+            std::string ext_name = std::string(fn->name);
+            auto last_colons = ext_name.rfind("::");
+            if (last_colons != std::string::npos) {
+                ext_name = ext_name.substr(last_colons + 2);
+            }
+            ext_name = sanitize_symbol_raw(ext_name);
             if (!extern_declared.count(ext_name)) {
                 extern_declared.insert(ext_name);
                 text_sec_ << "extern " << ext_name << "\n";
@@ -142,7 +168,7 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
     loop_stack_.clear();
     subject_stack_.clear();
 
-    std::string fn_lbl = sanitize_nasm_identifier(fn->name);
+    std::string fn_lbl = sanitize_symbol_raw(fn->name);
 
     if (fn->is_exported || fn->name == "main") {
         text_sec_ << "global " << fn_lbl << "\n";
@@ -826,6 +852,20 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                         callee += "__" + TypeChecker::get_type_name(a);
                     }
                 }
+
+                if (current_program_) {
+                    for (const auto* fn : current_program_->functions) {
+                        if (fn->is_extern_c) {
+                            std::string fn_n = std::string(fn->name);
+                            if (callee == fn_n || callee.ends_with("::" + fn_n)) {
+                                auto last_colons = fn_n.rfind("::");
+                                callee = (last_colons != std::string::npos) ? fn_n.substr(last_colons + 2) : fn_n;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
             }
             break;

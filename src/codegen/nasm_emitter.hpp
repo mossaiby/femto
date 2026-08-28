@@ -37,6 +37,7 @@ private:
     std::unordered_map<std::string, VarInfo> local_vars_;
     std::vector<LoopContext> loop_stack_;
     std::vector<uint32_t> subject_stack_;
+    const ASTProgram* current_program_ = nullptr;
     uint64_t label_seq_ = 0;
 
     std::string next_label(std::string_view prefix) {

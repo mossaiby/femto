@@ -80,7 +80,6 @@ public:
                 std::cerr << "error: cannot find module '" << imp << "' imported in '" << canonical_path << "'\n";
                 return false;
             }
-            // Module prefix for namespacing: "std/io" -> "std::io"
             std::string sub_prefix;
             for (char c : imp) {
                 if (c == '/') {
@@ -97,7 +96,7 @@ public:
         // Merge declarations and register qualified names
         for (auto* fn : prog.functions) {
             master_prog.functions.push_back(fn);
-            if (!mod_prefix.empty() && fn->name.find("::") == std::string_view::npos && !fn->is_extern_c) {
+            if (!mod_prefix.empty() && fn->name.find("::") == std::string_view::npos) {
                 std::string q_name = mod_prefix + "::" + std::string(fn->name);
                 char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
                 std::memcpy(q_buf, q_name.data(), q_name.size());
@@ -259,7 +258,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::string link_cmd = "gcc -no-pie " + obj_path + " " + rt_obj + " -o " + output_path;
+    // Link with gcc, runtime object, and libm (-lm)
+    std::string link_cmd = "gcc -no-pie " + obj_path + " " + rt_obj + " -lm -o " + output_path;
     if (std::system(link_cmd.c_str()) != 0) {
         std::cerr << "error: linking failed (make sure runtime/femto_rt.o is assembled)\n";
         if (!keep_temps) {
