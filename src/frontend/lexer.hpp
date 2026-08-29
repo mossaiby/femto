@@ -14,6 +14,10 @@ public:
 
     Token next_token();
     std::string_view source() const { return src_; }
+    const SourceManager& source_manager() const { return sm_; }
+
+    uint32_t cursor() const { return cursor_; }
+    void set_cursor(uint32_t pos) { cursor_ = pos <= src_.size() ? pos : (uint32_t)src_.size(); }
 
 private:
     char peek(size_t ahead = 0) const {

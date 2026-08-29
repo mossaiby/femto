@@ -1,0 +1,6 @@
+// Negative Test: Declaring uninitialized variable must fail parsing (Mandatory '=')
+#export
+main :: () -> int32 {
+    int32 uninit;
+    return 0;
+}

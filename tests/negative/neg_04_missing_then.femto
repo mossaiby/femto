@@ -1,0 +1,9 @@
+// Negative Test: if statement missing mandatory 'then' keyword must fail parsing
+#export
+main :: () -> int32 {
+    int32 x = 5;
+    if (x > 0) {
+        return 1;
+    }
+    return 0;
+}

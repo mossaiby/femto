@@ -1,0 +1,6 @@
+// Negative Test: Assigning string to int32 must fail type checking
+#export
+main :: () -> int32 {
+    int32 x = "incompatible string";
+    return x;
+}

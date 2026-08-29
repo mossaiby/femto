@@ -1,0 +1,44 @@
+// ============================================================================
+// FILE: tests/test_04_matching_foreach.femto
+// ============================================================================
+import std::io;
+
+#export
+eval_category :: (int32 code) -> int32 {
+    int32 result = match (code) {
+        # == 1 || # == 2 { 10 }
+        # == 3           { 20 }
+        # >= 10          { 100 }
+        default          { -1 }
+    };
+    return result;
+}
+
+#export
+main :: () -> int32 {
+    // 1. Pattern matching
+    int32 r1 = eval_category(1);  // 10
+    int32 r2 = eval_category(3);  // 20
+    int32 r3 = eval_category(50); // 100
+    int32 r4 = eval_category(7);  // -1
+
+    // 2. Foreach on array
+    int32[4] numbers = [10, 20, 30, 40];
+    int32 array_sum = 0;
+    foreach (int32 n in numbers) {
+        array_sum += n;
+    } // 100
+
+    // 3. Foreach with index on slice
+    int32[] slice = numbers[1..4]; // [20, 30, 40]
+    int32 indexed_calc = 0;
+    foreach (int32 idx, int32 val in slice) {
+        indexed_calc += (idx + 1) * val;
+    } // 1*20 + 2*30 + 3*40 = 20 + 60 + 120 = 200
+
+    if (r1 == 10 && r2 == 20 && r3 == 100 && r4 == -1 && array_sum == 100 && indexed_calc == 200) then {
+        std::io::println("[PASS] test_04_matching_foreach");
+        return 0;
+    }
+    return 1;
+}

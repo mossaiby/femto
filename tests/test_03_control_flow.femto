@@ -1,0 +1,62 @@
+// ============================================================================
+// FILE: tests/test_03_control_flow.femto
+// ============================================================================
+import std::io;
+
+#export
+main :: () -> int32 {
+    // 1. While loop
+    int32 w_sum = 0;
+    int32 i = 1;
+    while (i <= 5) {
+        w_sum += i;
+        i++;
+    } // 15
+
+    // 2. Do-while loop
+    int32 dw_count = 0;
+    int32 val = 10;
+    do {
+        dw_count++;
+        val -= 3;
+    } while (val > 0); // 4 iterations (10->7->4->1->-2)
+
+    // 3. 3-clause For loop
+    int32 for_sum = 0;
+    for (int32 j = 0; j < 10; j++) {
+        if (j == 3) then {
+            continue; // skip 3
+        }
+        if (j == 8) then {
+            break; // stop at 8
+        }
+        for_sum += j;
+    } // 0+1+2+4+5+6+7 = 25
+
+    // 4. Switch-case-default
+    int32 score = 90;
+    int32 grade_code = 0;
+    switch (score) {
+        case 100 { grade_code = 1; }
+        case 90  { grade_code = 2; }
+        case 80  { grade_code = 3; }
+        default  { grade_code = 99; }
+    } // 2
+
+    // 5. Multi-level break(2)
+    int32 nested_total = 0;
+    for (int32 r = 0; r < 5; r++) {
+        for (int32 c = 0; c < 5; c++) {
+            if (r == 2 && c == 2) then {
+                break(2);
+            }
+            nested_total++;
+        }
+    } // r=0: 5, r=1: 5, r=2: 2 -> total = 12
+
+    if (w_sum == 15 && dw_count == 4 && for_sum == 25 && grade_code == 2 && nested_total == 12) then {
+        std::io::println("[PASS] test_03_control_flow");
+        return 0;
+    }
+    return 1;
+}

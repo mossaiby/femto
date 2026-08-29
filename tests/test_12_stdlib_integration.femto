@@ -1,0 +1,54 @@
+// ============================================================================
+// FILE: tests/test_12_stdlib_integration.femto
+// ============================================================================
+import std::io;
+import std::math;
+import std::string;
+import std::fs;
+import std::collection;
+import std::mem;
+import std::c;
+
+#export
+main :: () -> int32 {
+    // 1. std::math
+    float64 s_val = std::math::sin(std::math::deg_to_rad(90.0)); // 1.0
+    float64 c_val = std::math::clamp(250.0, 0.0, 100.0);        // 100.0
+    float64 sq    = std::math::sqrt(144.0);                     // 12.0
+
+    // 2. std::string (dynamic growable string)
+    String str = string_create(16);
+    string_append_str(&str, "Femto");
+    string_append_char(&str, 32); // ' '
+    string_append_str(&str, "TestSuite");
+    uint64 s_len = str.length; // 15
+    string_destroy(&str);
+
+    // 3. std::fs (file writing and reading)
+    int32 w_fd = std::fs::open_write("suite_test.txt")??;
+    std::fs::write_str(w_fd, "Hello Femto FS");
+    std::fs::close_file(w_fd);
+
+    int32 r_fd = std::fs::open_read("suite_test.txt")??;
+    int64 buf = std::c::malloc(32);
+    int64 bytes = std::fs::read_bytes(r_fd, buf, 32);
+    std::fs::close_file(r_fd);
+    std::c::free(buf);
+
+    // 4. std::collection (Array<T>)
+    Array<int32> arr = array_create<int32>(8);
+    uint64 cap = arr.capacity; // 8
+    array_destroy<int32>(&arr);
+
+    // 5. std::mem
+    int64 raw_mem = std::mem::alloc_raw(64)??;
+    std::mem::set(raw_mem, 0, 64);
+    std::mem::free(raw_mem);
+
+    if (s_val == 1.0 && c_val == 100.0 && sq == 12.0 && s_len == 15 &&
+        bytes == 14 && cap == 8) then {
+        std::io::println("[PASS] test_12_stdlib_integration");
+        return 0;
+    }
+    return 1;
+}

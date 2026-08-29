@@ -1,0 +1,39 @@
+// ============================================================================
+// FILE: tests/test_07_results_errors.femto
+// ============================================================================
+import std::io;
+
+#export
+safe_divide :: (int32 a, int32 b) -> !int32 {
+    if (b == 0) then {
+        return failure(101); // Error code 101
+    }
+    return success(a / b);
+}
+
+#export
+compute_step :: (int32 a, int32 b) -> !int32 {
+    int32 q = safe_divide(a, b)??; // unwraps or propagates error
+    return success(q * 10);
+}
+
+#export
+main :: () -> int32 {
+    // 1. Successful propagation
+    int32 ok_res = 0;
+    compute_step(100, 5)
+        ?? (int32 val)  { ok_res = val; }
+        :  (int32 code) { ok_res = -1; }; // 20 * 10 = 200
+
+    // 2. Failed propagation with error code
+    int32 err_code = 0;
+    compute_step(100, 0)
+        ?? (int32 val)  { err_code = 0; }
+        :  (int32 code) { err_code = code; }; // 101
+
+    if (ok_res == 200 && err_code == 101) then {
+        std::io::println("[PASS] test_07_results_errors");
+        return 0;
+    }
+    return 1;
+}

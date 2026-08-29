@@ -4,6 +4,62 @@
 
 namespace femto {
 
+static bool types_are_equal_or_compatible(const SemaType* expected, const SemaType* actual, const std::unordered_map<std::string, SemaType*>& type_env) {
+    if (!expected || !actual) return true;
+    if (expected == actual) return true;
+
+    if (expected->is_integer() && actual->is_integer()) {
+        return true;
+    }
+
+    if (expected->is_floating_point() && actual->is_floating_point()) {
+        return true;
+    }
+
+    if (expected->kind == SemaType::Kind::Pointer && actual->kind == SemaType::Kind::Pointer) {
+        auto* exp_p = std::get<PointerTypeInfo>(expected->data).pointee;
+        auto* act_p = std::get<PointerTypeInfo>(actual->data).pointee;
+        if (!exp_p || !act_p) return true;
+        auto void_it = type_env.find("void");
+        auto* void_t = void_it != type_env.end() ? void_it->second : nullptr;
+        if (exp_p == void_t || act_p == void_t) return true;
+        return types_are_equal_or_compatible(exp_p, act_p, type_env);
+    }
+
+    if (expected->kind == SemaType::Kind::Slice && actual->kind == SemaType::Kind::Slice) {
+        auto* exp_e = std::get<SliceTypeInfo>(expected->data).element;
+        auto* act_e = std::get<SliceTypeInfo>(actual->data).element;
+        return types_are_equal_or_compatible(exp_e, act_e, type_env);
+    }
+
+    if (expected->kind == SemaType::Kind::Array && actual->kind == SemaType::Kind::Array) {
+        auto& exp_a = std::get<ArrayTypeInfo>(expected->data);
+        auto& act_a = std::get<ArrayTypeInfo>(actual->data);
+        if (exp_a.size != act_a.size) return false;
+        return types_are_equal_or_compatible(exp_a.element, act_a.element, type_env);
+    }
+
+    if (expected->kind == SemaType::Kind::Result && actual->kind == SemaType::Kind::Result) {
+        auto* exp_r = std::get<ResultTypeInfo>(expected->data).payload;
+        auto* act_r = std::get<ResultTypeInfo>(actual->data).payload;
+        return types_are_equal_or_compatible(exp_r, act_r, type_env);
+    }
+
+    if (expected->kind == SemaType::Kind::Struct && actual->kind == SemaType::Kind::Struct) {
+        auto& exp_s = std::get<StructTypeInfo>(expected->data);
+        auto& act_s = std::get<StructTypeInfo>(actual->data);
+        return exp_s.name == act_s.name;
+    }
+
+    if (expected->kind == SemaType::Kind::Union && actual->kind == SemaType::Kind::Union) {
+        auto& exp_u = std::get<UnionTypeInfo>(expected->data);
+        auto& act_u = std::get<UnionTypeInfo>(actual->data);
+        return exp_u.name == act_u.name;
+    }
+
+    return false;
+}
+
 std::string TypeChecker::get_type_name(const ASTType* ty) {
     if (!ty) return "int32";
     if (ty->kind == TypeKind::Primitive) {
@@ -158,10 +214,21 @@ std::string TypeChecker::monomorphize_struct(ASTType* generic_ty) {
         return mangled;
     }
 
-    auto it = generic_structs_.find(std::string(generic_ty->custom_name));
-    if (it == generic_structs_.end()) return mangled;
+    std::string orig_name = std::string(generic_ty->custom_name);
+    ASTStructDecl* orig = nullptr;
+    auto it = generic_structs_.find(orig_name);
+    if (it != generic_structs_.end()) {
+        orig = it->second;
+    } else {
+        for (auto& [g_name, g_st] : generic_structs_) {
+            if (g_name == orig_name || g_name.ends_with("::" + orig_name)) {
+                orig = g_st;
+                break;
+            }
+        }
+    }
+    if (!orig) return mangled;
 
-    ASTStructDecl* orig = it->second;
     std::unordered_map<std::string, ASTType*> subst;
     for (size_t i = 0; i < orig->generic_params.size() && i < generic_ty->generic_args.size(); ++i) {
         subst[std::string(orig->generic_params[i])] = generic_ty->generic_args[i];
@@ -191,10 +258,21 @@ std::string TypeChecker::monomorphize_union(ASTType* generic_ty) {
         return mangled;
     }
 
-    auto it = generic_unions_.find(std::string(generic_ty->custom_name));
-    if (it == generic_unions_.end()) return mangled;
+    std::string orig_name = std::string(generic_ty->custom_name);
+    ASTUnionDecl* orig = nullptr;
+    auto it = generic_unions_.find(orig_name);
+    if (it != generic_unions_.end()) {
+        orig = it->second;
+    } else {
+        for (auto& [g_name, g_un] : generic_unions_) {
+            if (g_name == orig_name || g_name.ends_with("::" + orig_name)) {
+                orig = g_un;
+                break;
+            }
+        }
+    }
+    if (!orig) return mangled;
 
-    ASTUnionDecl* orig = it->second;
     std::unordered_map<std::string, ASTType*> subst;
     for (size_t i = 0; i < orig->generic_params.size() && i < generic_ty->generic_args.size(); ++i) {
         subst[std::string(orig->generic_params[i])] = generic_ty->generic_args[i];
@@ -228,10 +306,20 @@ std::string TypeChecker::monomorphize_function(ASTExpr* call_expr, ASTProgram& p
         }
     }
 
+    ASTFunctionDecl* orig_fn = nullptr;
     auto it = generic_functions_.find(orig_name);
-    if (it == generic_functions_.end()) return orig_name;
+    if (it != generic_functions_.end()) {
+        orig_fn = it->second;
+    } else {
+        for (auto& [g_name, g_fn] : generic_functions_) {
+            if (g_name == orig_name || g_name.ends_with("::" + orig_name)) {
+                orig_fn = g_fn;
+                break;
+            }
+        }
+    }
+    if (!orig_fn) return orig_name;
 
-    ASTFunctionDecl* orig_fn = it->second;
     std::unordered_map<std::string, ASTType*> subst;
     for (size_t i = 0; i < orig_fn->generic_params.size() && i < call_expr->generic_args.size(); ++i) {
         subst[std::string(orig_fn->generic_params[i])] = call_expr->generic_args[i];
@@ -417,16 +505,9 @@ SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
 
 bool TypeChecker::check_type_compatibility(SemaType* expected, SemaType* actual, SourceSpan span) {
     if (!expected || !actual) return true;
-    if (expected == actual) return true;
-    
-    if (expected->kind == SemaType::Kind::Pointer && actual->kind == SemaType::Kind::Pointer) {
-        auto exp_p = std::get<PointerTypeInfo>(expected->data).pointee;
-        auto act_p = std::get<PointerTypeInfo>(actual->data).pointee;
-        if ((exp_p && exp_p == type_env_["void"]) || (act_p && act_p == type_env_["void"])) {
-            return true;
-        }
+    if (types_are_equal_or_compatible(expected, actual, type_env_)) {
+        return true;
     }
-
     diag_.report_error(span, "type mismatch: cannot implicitly convert between distinct types");
     return false;
 }
@@ -438,11 +519,36 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgr
             auto* declared_t = resolve_ast_type(stmt->type_annot);
             symbol_table_[std::string(stmt->name)] = SymbolInfo{ declared_t, stmt->is_const };
             if (stmt->init_expr) {
-                check_expression(stmt->init_expr, prog);
+                auto* init_t = check_expression(stmt->init_expr, prog);
+                if (declared_t && init_t) {
+                    if (stmt->init_expr->kind != ExprKind::StructLiteral &&
+                        stmt->init_expr->kind != ExprKind::ArrayLiteral &&
+                        stmt->init_expr->kind != ExprKind::SliceSubrange) {
+                        check_type_compatibility(declared_t, init_t, stmt->span);
+                    }
+                }
             }
             break;
         }
-        case StmtKind::Assignment:
+        case StmtKind::Assignment: {
+            SemaType* tgt_t = nullptr;
+            if (stmt->target_expr) {
+                if (stmt->target_expr->kind == ExprKind::Identifier) {
+                    auto it = symbol_table_.find(std::string(stmt->target_expr->raw_text));
+                    if (it != symbol_table_.end() && it->second.is_const) {
+                        diag_.report_error(stmt->span, "cannot mutate immutable const variable '" + std::string(stmt->target_expr->raw_text) + "'");
+                    }
+                }
+                tgt_t = check_expression(stmt->target_expr, prog);
+            }
+            if (stmt->value_expr) {
+                auto* val_t = check_expression(stmt->value_expr, prog);
+                if (tgt_t && val_t) {
+                    check_type_compatibility(tgt_t, val_t, stmt->span);
+                }
+            }
+            break;
+        }
         case StmtKind::CompoundAssignment:
         case StmtKind::Increment:
         case StmtKind::Decrement: {

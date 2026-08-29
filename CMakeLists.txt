@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Include directory for compiler headers
-include_directories(src)
+include_directories(src tests/unit)
 
 # Path to the runtime assembly source and output object
 set(RUNTIME_ASM ${CMAKE_CURRENT_SOURCE_DIR}/runtime/femto_rt.asm)
@@ -38,4 +38,30 @@ add_dependencies(femtoc femto_runtime)
 target_compile_definitions(femtoc PRIVATE
     FEMTO_RUNTIME_OBJ="${RUNTIME_OBJ}"
     FEMTO_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stdlib"
+)
+
+# Compiler Components Native Unit Test Executable
+add_executable(femto_unit_tests
+    tests/unit/main.cpp
+    tests/unit/test_lexer.cpp
+    tests/unit/test_parser.cpp
+    tests/unit/test_sema.cpp
+    tests/unit/test_codegen.cpp
+    src/frontend/lexer.cpp
+    src/frontend/parser.cpp
+    src/sema/type_checker.cpp
+    src/codegen/nasm_emitter.cpp
+)
+
+add_dependencies(femto_unit_tests femto_runtime)
+
+# Enable CTest integration and custom unified 'check' target
+enable_testing()
+find_package(Python3 REQUIRED)
+
+add_custom_target(check
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_runner.py
+    DEPENDS femtoc femto_unit_tests femto_runtime
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Executing Femto Compiler Full-Blown Unified Test Suite"
 )

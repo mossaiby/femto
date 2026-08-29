@@ -1,0 +1,7 @@
+// Negative Test: Mutating an immutable const binding must fail semantic check
+#export
+main :: () -> int32 {
+    const int32 MAX = 100;
+    MAX = 200;
+    return MAX;
+}

@@ -1,0 +1,8 @@
+// Negative Test: break(3) when only enclosed by 1 loop must fail semantic check
+#export
+main :: () -> int32 {
+    while (1 == 1) {
+        break(3);
+    }
+    return 0;
+}

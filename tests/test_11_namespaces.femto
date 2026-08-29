@@ -1,0 +1,31 @@
+// ============================================================================
+// FILE: tests/test_11_namespaces.femto
+// ============================================================================
+import std::io;
+
+namespace Math::Calculus {
+    #export
+    derivative_sq :: (float64 x) -> float64 {
+        // d/dx(x^2) = 2x
+        return 2.0 * x;
+    }
+}
+
+namespace Math::Statistics {
+    #export
+    mean_3 :: (float64 a, float64 b, float64 c) -> float64 {
+        return (a + b + c) / 3.0;
+    }
+}
+
+#export
+main :: () -> int32 {
+    float64 d = Math::Calculus::derivative_sq(5.0); // 10.0
+    float64 m = Math::Statistics::mean_3(10.0, 20.0, 60.0); // 30.0
+
+    if (d == 10.0 && m == 30.0) then {
+        std::io::println("[PASS] test_11_namespaces");
+        return 0;
+    }
+    return 1;
+}

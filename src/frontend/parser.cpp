@@ -28,87 +28,109 @@ int Parser::get_binary_precedence(TokenKind kind) {
     }
 }
 
-bool Parser::is_generic_type_start() {
-    if (current_.kind != TokenKind::Identifier || peek_token_.kind != TokenKind::Lt) {
-        return false;
+bool Parser::match_gt() {
+    if (current_.kind == TokenKind::Gt) {
+        advance();
+        return true;
     }
-    std::string_view src = lexer_.source();
-    uint32_t pos = peek_token_.span.start.offset;
-    if (pos >= src.size() || src[pos] != '<') return false;
-
-    int depth = 0;
-    while (pos < src.size()) {
-        char c = src[pos];
-        if (c == '<') {
-            depth++;
-        } else if (c == '>') {
-            depth--;
-            if (depth == 0) {
-                pos++;
-                while (pos < src.size()) {
-                    if (std::isspace(static_cast<unsigned char>(src[pos]))) {
-                        pos++;
-                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '/') {
-                        while (pos < src.size() && src[pos] != '\n') pos++;
-                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '*') {
-                        pos += 2;
-                        while (pos + 1 < src.size() && !(src[pos] == '*' && src[pos + 1] == '/')) pos++;
-                        if (pos + 1 < src.size()) pos += 2;
-                    } else {
-                        break;
-                    }
-                }
-                if (pos < src.size()) {
-                    char next_c = src[pos];
-                    if (next_c == '(') {
-                        return false;
-                    }
-                    if (std::isalpha(static_cast<unsigned char>(next_c)) || next_c == '_' || next_c == '*' || next_c == '[') {
-                        return true;
-                    }
-                }
-                return false;
-            }
-        }
-        pos++;
+    if (current_.kind == TokenKind::Shr) {
+        current_.kind = TokenKind::Gt;
+        current_.span.start.offset += 1;
+        current_.span.length = 1;
+        current_.text = current_.text.substr(1);
+        return true;
     }
     return false;
 }
 
-bool Parser::is_generic_call_at(uint32_t lt_offset) {
-    std::string_view src = lexer_.source();
-    uint32_t pos = lt_offset;
-    if (pos >= src.size() || src[pos] != '<') return false;
+bool Parser::is_generic_type_start() {
+    if (current_.kind != TokenKind::Identifier || peek_token_.kind != TokenKind::Lt) {
+        return false;
+    }
 
-    int depth = 0;
-    while (pos < src.size()) {
-        char c = src[pos];
-        if (c == '<') {
+    SourceManager dummy_sm(std::string(lexer_.source_manager().filename()), std::string(lexer_.source()));
+    Diagnostics dummy_diag(dummy_sm);
+    Lexer lookahead(lexer_.source_manager(), dummy_diag);
+    lookahead.set_cursor(peek_token_.span.start.offset);
+
+    Token tok = lookahead.next_token();
+    if (tok.kind != TokenKind::Lt) return false;
+
+    int depth = 1;
+    while (true) {
+        tok = lookahead.next_token();
+        if (tok.kind == TokenKind::Eof || tok.kind == TokenKind::Semicolon || 
+            tok.kind == TokenKind::LBrace || tok.kind == TokenKind::RBrace) {
+            return false;
+        }
+        if (tok.kind == TokenKind::Lt) {
             depth++;
-        } else if (c == '>') {
+        } else if (tok.kind == TokenKind::Shl) {
+            depth += 2;
+        } else if (tok.kind == TokenKind::Gt) {
             depth--;
             if (depth == 0) {
-                pos++;
-                while (pos < src.size()) {
-                    if (std::isspace(static_cast<unsigned char>(src[pos]))) {
-                        pos++;
-                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '/') {
-                        while (pos < src.size() && src[pos] != '\n') pos++;
-                    } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '*') {
-                        pos += 2;
-                        while (pos + 1 < src.size() && !(src[pos] == '*' && src[pos + 1] == '/')) pos++;
-                        if (pos + 1 < src.size()) pos += 2;
-                    } else {
-                        break;
-                    }
+                Token next = lookahead.next_token();
+                if (next.kind == TokenKind::LParen) {
+                    return false;
                 }
-                if (pos < src.size() && src[pos] == '(') {
+                if (next.kind == TokenKind::Identifier || next.kind == TokenKind::Star || 
+                    next.kind == TokenKind::LBracket || next.kind == TokenKind::Amp) {
+                    return true;
+                }
+                return false;
+            }
+        } else if (tok.kind == TokenKind::Shr) {
+            depth -= 2;
+            if (depth <= 0) {
+                Token next = lookahead.next_token();
+                if (next.kind == TokenKind::LParen) {
+                    return false;
+                }
+                if (next.kind == TokenKind::Identifier || next.kind == TokenKind::Star || 
+                    next.kind == TokenKind::LBracket || next.kind == TokenKind::Amp) {
                     return true;
                 }
                 return false;
             }
         }
-        pos++;
+    }
+    return false;
+}
+
+bool Parser::is_generic_call_at(uint32_t lt_offset) {
+    SourceManager dummy_sm(std::string(lexer_.source_manager().filename()), std::string(lexer_.source()));
+    Diagnostics dummy_diag(dummy_sm);
+    Lexer lookahead(lexer_.source_manager(), dummy_diag);
+    lookahead.set_cursor(lt_offset);
+
+    Token tok = lookahead.next_token();
+    if (tok.kind != TokenKind::Lt) return false;
+
+    int depth = 1;
+    while (true) {
+        tok = lookahead.next_token();
+        if (tok.kind == TokenKind::Eof || tok.kind == TokenKind::Semicolon || 
+            tok.kind == TokenKind::LBrace || tok.kind == TokenKind::RBrace) {
+            return false;
+        }
+        if (tok.kind == TokenKind::Lt) {
+            depth++;
+        } else if (tok.kind == TokenKind::Shl) {
+            depth += 2;
+        } else if (tok.kind == TokenKind::Gt) {
+            depth--;
+            if (depth == 0) {
+                Token next = lookahead.next_token();
+                return (next.kind == TokenKind::LParen);
+            }
+        } else if (tok.kind == TokenKind::Shr) {
+            depth -= 2;
+            if (depth <= 0) {
+                Token next = lookahead.next_token();
+                return (next.kind == TokenKind::LParen);
+            }
+        }
     }
     return false;
 }
@@ -153,12 +175,14 @@ ASTType* Parser::parse_type() {
         base_ty->span = id.span;
 
         if (match(TokenKind::Lt)) {
-            if (current_.kind != TokenKind::Gt) {
+            if (current_.kind != TokenKind::Gt && current_.kind != TokenKind::Shr) {
                 do {
                     base_ty->generic_args.push_back(parse_type());
                 } while (match(TokenKind::Comma));
             }
-            expect(TokenKind::Gt, "expected '>' closing generic type arguments");
+            if (!match_gt()) {
+                diag_.report_error(current_.span, "expected '>' closing generic type arguments");
+            }
         }
     } else {
         diag_.report_error(current_.span, "expected type specifier");
@@ -340,7 +364,6 @@ ASTExpr* Parser::parse_primary_expression() {
         return e;
     }
 
-    // Literals: including null, booleans, strings, and numbers
     if (current_.kind == TokenKind::IntLiteral || current_.kind == TokenKind::FloatLiteral ||
         current_.kind == TokenKind::StringLiteral || current_.kind == TokenKind::RawStringLiteral ||
         current_.kind == TokenKind::CharLiteral || current_.kind == TokenKind::KwTrue || 
@@ -372,12 +395,14 @@ ASTExpr* Parser::parse_primary_expression() {
         if (current_.kind == TokenKind::Lt && is_generic_call_at(current_.span.start.offset)) {
             advance();
             std::vector<ASTType*> g_args;
-            if (current_.kind != TokenKind::Gt) {
+            if (current_.kind != TokenKind::Gt && current_.kind != TokenKind::Shr) {
                 do {
                     g_args.push_back(parse_type());
                 } while (match(TokenKind::Comma));
             }
-            expect(TokenKind::Gt, "expected '>' closing generic call arguments");
+            if (!match_gt()) {
+                diag_.report_error(current_.span, "expected '>' closing generic call arguments");
+            }
             expect(TokenKind::LParen, "expected '(' for call arguments");
 
             ASTExpr* call = arena_.allocate<ASTExpr>();
@@ -657,13 +682,15 @@ void Parser::parse_top_level_declaration(ASTProgram& prog, bool is_exported) {
             prog.enums.push_back(parse_enum_decl(name_tok.text, is_exported));
         } else if (match(TokenKind::Lt)) {
             std::vector<std::string_view> g_params;
-            if (current_.kind != TokenKind::Gt) {
+            if (current_.kind != TokenKind::Gt && current_.kind != TokenKind::Shr) {
                 do {
                     Token p = expect(TokenKind::Identifier, "expected generic parameter name");
                     g_params.push_back(p.text);
                 } while (match(TokenKind::Comma));
             }
-            expect(TokenKind::Gt, "expected '>' closing generic parameters");
+            if (!match_gt()) {
+                diag_.report_error(current_.span, "expected '>' closing generic parameters");
+            }
             prog.functions.push_back(parse_function_decl(name_tok.text, std::move(g_params), is_exported));
         } else if (current_.kind == TokenKind::LParen) {
             prog.functions.push_back(parse_function_decl(name_tok.text, {}, is_exported));
@@ -742,13 +769,15 @@ ASTStructDecl* Parser::parse_struct_decl(std::string_view name, bool is_exported
     s->is_exported = is_exported;
 
     if (match(TokenKind::Lt)) {
-        if (current_.kind != TokenKind::Gt) {
+        if (current_.kind != TokenKind::Gt && current_.kind != TokenKind::Shr) {
             do {
                 Token p = expect(TokenKind::Identifier, "expected generic parameter name");
                 s->generic_params.push_back(p.text);
             } while (match(TokenKind::Comma));
         }
-        expect(TokenKind::Gt, "expected '>' closing generic struct parameters");
+        if (!match_gt()) {
+            diag_.report_error(current_.span, "expected '>' closing generic struct parameters");
+        }
     }
 
     expect(TokenKind::LBrace, "expected '{' for struct body");
@@ -773,13 +802,15 @@ ASTUnionDecl* Parser::parse_union_decl(std::string_view name, bool is_exported) 
     u->is_exported = is_exported;
 
     if (match(TokenKind::Lt)) {
-        if (current_.kind != TokenKind::Gt) {
+        if (current_.kind != TokenKind::Gt && current_.kind != TokenKind::Shr) {
             do {
                 Token p = expect(TokenKind::Identifier, "expected generic parameter name");
                 u->generic_params.push_back(p.text);
             } while (match(TokenKind::Comma));
         }
-        expect(TokenKind::Gt, "expected '>' closing generic union parameters");
+        if (!match_gt()) {
+            diag_.report_error(current_.span, "expected '>' closing generic union parameters");
+        }
     }
 
     expect(TokenKind::LBrace, "expected '{' for union body");
@@ -836,11 +867,13 @@ std::vector<ASTStmt*> Parser::parse_block() {
 }
 
 ASTStmt* Parser::parse_statement() {
-    // 0. Local const variable declaration: const int32 x = 10;
+    SourceSpan start_span = current_.span;
+
     if (match(TokenKind::KwConst)) {
         ASTType* ty = parse_type();
         auto* s = parse_var_decl_stmt(ty);
         s->is_const = true;
+        s->span = start_span.merge(current_.span);
         return s;
     }
 
@@ -858,12 +891,34 @@ ASTStmt* Parser::parse_statement() {
         stmt->kind = StmtKind::Return;
         if (current_.kind != TokenKind::Semicolon) stmt->value_expr = parse_expression();
         expect(TokenKind::Semicolon, "expected ';' after return");
+        stmt->span = start_span.merge(current_.span);
         return stmt;
     }
 
     if (current_.kind >= TokenKind::KwInt8 && current_.kind <= TokenKind::KwString32) {
         ASTType* ty = parse_type();
         return parse_var_decl_stmt(ty);
+    }
+
+    if (current_.kind == TokenKind::Bang) {
+        if ((peek_token_.kind >= TokenKind::KwInt8 && peek_token_.kind <= TokenKind::KwString32) ||
+            peek_token_.kind == TokenKind::KwVoid) {
+            ASTType* ty = parse_type();
+            return parse_var_decl_stmt(ty);
+        }
+        if (peek_token_.kind == TokenKind::Identifier) {
+            SourceManager dummy_sm(std::string(lexer_.source_manager().filename()), std::string(lexer_.source()));
+            Diagnostics dummy_diag(dummy_sm);
+            Lexer lookahead(lexer_.source_manager(), dummy_diag);
+            lookahead.set_cursor(current_.span.start.offset);
+            lookahead.next_token(); // '!'
+            Token t1 = lookahead.next_token(); // CustomType
+            Token t2 = lookahead.next_token(); // following token
+            if (t2.kind == TokenKind::Identifier || t2.kind == TokenKind::Star || t2.kind == TokenKind::LBracket || t2.kind == TokenKind::Lt) {
+                ASTType* ty = parse_type();
+                return parse_var_decl_stmt(ty);
+            }
+        }
     }
 
     if (current_.kind == TokenKind::Identifier) {
@@ -896,6 +951,7 @@ ASTStmt* Parser::parse_statement() {
         s->failure_block = parse_block();
 
         match(TokenKind::Semicolon);
+        s->span = start_span.merge(current_.span);
         return s;
     }
 
@@ -905,6 +961,7 @@ ASTStmt* Parser::parse_statement() {
         s->target_expr = lval;
         s->value_expr = parse_expression();
         expect(TokenKind::Semicolon, "expected ';' after assignment");
+        s->span = lval ? lval->span.merge(current_.span) : start_span.merge(current_.span);
         return s;
     }
     if (current_.kind == TokenKind::PlusEq || current_.kind == TokenKind::MinusEq ||
@@ -918,6 +975,7 @@ ASTStmt* Parser::parse_statement() {
         s->op = op_tok.text;
         s->value_expr = parse_expression();
         expect(TokenKind::Semicolon, "expected ';' after compound assignment");
+        s->span = lval ? lval->span.merge(current_.span) : start_span.merge(current_.span);
         return s;
     }
     if (match(TokenKind::PlusPlus)) {
@@ -925,6 +983,7 @@ ASTStmt* Parser::parse_statement() {
         s->kind = StmtKind::Increment;
         s->target_expr = lval;
         expect(TokenKind::Semicolon, "expected ';' after ++");
+        s->span = lval ? lval->span.merge(current_.span) : start_span.merge(current_.span);
         return s;
     }
     if (match(TokenKind::MinusMinus)) {
@@ -932,6 +991,7 @@ ASTStmt* Parser::parse_statement() {
         s->kind = StmtKind::Decrement;
         s->target_expr = lval;
         expect(TokenKind::Semicolon, "expected ';' after --");
+        s->span = lval ? lval->span.merge(current_.span) : start_span.merge(current_.span);
         return s;
     }
 
@@ -939,6 +999,7 @@ ASTStmt* Parser::parse_statement() {
     auto* s = arena_.allocate<ASTStmt>();
     s->kind = StmtKind::ExprStmt;
     s->value_expr = lval;
+    s->span = lval ? lval->span.merge(current_.span) : start_span.merge(current_.span);
     return s;
 }
 
@@ -964,6 +1025,7 @@ ASTStmt* Parser::parse_var_decl_stmt(ASTType* type_annot) {
     expect(TokenKind::Eq, "variables must be explicitly initialized ('=')");
     s->init_expr = parse_expression();
     expect(TokenKind::Semicolon, "expected ';' after declaration");
+    s->span = type_annot ? type_annot->span.merge(current_.span) : name_tok.span.merge(current_.span);
     return s;
 }
 

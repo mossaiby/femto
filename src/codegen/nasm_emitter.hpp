@@ -42,6 +42,7 @@ private:
     std::unordered_map<std::string, VarInfo> local_vars_;
     std::vector<LoopContext> loop_stack_;
     std::vector<uint32_t> subject_stack_;
+    uint32_t current_stack_offset_ = 0;
     const ASTProgram* current_program_ = nullptr;
     uint64_t label_seq_ = 0;
 
@@ -49,10 +50,13 @@ private:
         return std::string(prefix) + "_" + std::to_string(++label_seq_);
     }
 
+    uint32_t calculate_function_stack_size(const ASTFunctionDecl* fn);
     int64_t eval_const_expr(const ASTExpr* expr);
     SemaType* resolve_type_node(ASTType* ty);
     bool is_float_expr(const ASTExpr* expr);
     bool is_128bit_expr(const ASTExpr* expr);
+    bool is_64bit_expr(const ASTExpr* expr);
+    bool is_slice_expr(const ASTExpr* expr);
     SemaType* get_member_type(const ASTExpr* expr);
     SemaType* get_expr_type(const ASTExpr* expr);
 

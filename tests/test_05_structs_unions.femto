@@ -1,0 +1,41 @@
+// ============================================================================
+// FILE: tests/test_05_structs_unions.femto
+// ============================================================================
+import std::io;
+
+Point :: struct {
+    int32 x = 0;
+    int32 y = 0;
+}
+
+Rectangle :: struct {
+    Point top_left;
+    int32 width;
+    int32 height;
+}
+
+FloatIntUnion :: union {
+    int32   bits;
+    float32 val;
+}
+
+#export
+main :: () -> int32 {
+    // 1. Struct with designated initializer
+    Point p = { .x = 12, .y = 34 };
+    p.x += 8; // 20
+
+    // 2. Nested Struct
+    Rectangle rect = { .top_left = p, .width = 100, .height = 50 };
+    int32 area = rect.width * rect.height; // 5000
+
+    // 3. Untagged union bit-punning (0x3F800000 = 1065353216 = 1.0f)
+    FloatIntUnion u = { .bits = 1065353216 };
+    float64 f_val = @cast(float64, u.val); // 1.0
+
+    if (p.x == 20 && p.y == 34 && rect.top_left.x == 20 && area == 5000 && f_val == 1.0) then {
+        std::io::println("[PASS] test_05_structs_unions");
+        return 0;
+    }
+    return 1;
+}

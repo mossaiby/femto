@@ -1,0 +1,47 @@
+// ============================================================================
+// FILE: tests/test_06_pointers_slices.femto
+// ============================================================================
+import std::io;
+
+Node :: struct {
+    int32 value = 0;
+    int32 tag = 0;
+}
+
+#export
+mutate_node :: (Node* n, int32 v, int32 t) -> void {
+    n.value = v; // auto-dereference
+    n.tag = t;
+}
+
+#export
+sum_slice :: (int32[] s) -> int32 {
+    int32 total = 0;
+    int32 len = s.length();
+    for (int32 i = 0; i < len; i++) {
+        total += s[i];
+    }
+    return total;
+}
+
+#export
+main :: () -> int32 {
+    // 1. Pointers & address-of
+    Node n = { .value = 10, .tag = 1 };
+    mutate_node(&n, 42, 7);
+
+    // 2. Fixed arrays & array element mutation
+    int32[5] arr = [1, 2, 3, 4, 5];
+    arr[0] = 10;
+    arr[4] = 50;
+
+    // 3. Slicing subrange and length call
+    int32[] sub = arr[1..4]; // [2, 3, 4], len = 3
+    int32 slice_total = sum_slice(sub); // 9
+
+    if (n.value == 42 && n.tag == 7 && arr[0] == 10 && arr[4] == 50 && sub.length() == 3 && slice_total == 9) then {
+        std::io::println("[PASS] test_06_pointers_slices");
+        return 0;
+    }
+    return 1;
+}

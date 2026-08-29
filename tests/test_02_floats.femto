@@ -1,0 +1,37 @@
+// ============================================================================
+// FILE: tests/test_02_floats.femto
+// ============================================================================
+import std::io;
+
+#export
+compute_hypotenuse_sq :: (float64 a, float64 b) -> float64 {
+    return a * a + b * b;
+}
+
+#export
+main :: () -> int32 {
+    float64 x = 15.5;
+    float64 y = 2.5;
+
+    float64 sum = x + y;   // 18.0
+    float64 diff = x - y;  // 13.0
+    float64 prod = x * y;  // 38.75
+    float64 quot = x / y;  // 6.2
+
+    float64 hyp_sq = compute_hypotenuse_sq(3.0, 4.0); // 25.0
+
+    int32 cmp_ok = 0;
+    if (x > y && y < 5.0 && sum == 18.0 && quot > 6.0) then {
+        cmp_ok = 1;
+    }
+
+    float32 f32_val = @cast(float32, 12.5);
+    float64 f64_from_32 = @cast(float64, f32_val);
+
+    if (sum == 18.0 && diff == 13.0 && prod == 38.75 && quot == 6.2 &&
+        hyp_sq == 25.0 && cmp_ok == 1 && f64_from_32 == 12.5) then {
+        std::io::println("[PASS] test_02_floats");
+        return 0;
+    }
+    return 1;
+}

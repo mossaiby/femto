@@ -1,0 +1,35 @@
+// ============================================================================
+// FILE: tests/test_08_generics.femto
+// ============================================================================
+import std::io;
+
+// Generic Struct
+Pair :: struct <K, V> {
+    K key;
+    V value;
+}
+
+// Generic Function
+max_val :: <T>(T a, T b) -> T {
+    if (a > b) then {
+        return a;
+    }
+    return b;
+}
+
+#export
+main :: () -> int32 {
+    // 1. Monomorphization of generic function for int32 and float64
+    int32 m_int = max_val<int32>(42, 84); // 84
+    float64 m_flt = max_val<float64>(3.14, 9.81); // 9.81
+
+    // 2. Monomorphization of generic struct
+    Pair<int32, int32> p1 = { .key = 10, .value = 20 };
+    Pair<int32, float64> p2 = { .key = 1, .value = 99.5 };
+
+    if (m_int == 84 && m_flt == 9.81 && p1.key == 10 && p1.value == 20 && p2.key == 1 && p2.value == 99.5) then {
+        std::io::println("[PASS] test_08_generics");
+        return 0;
+    }
+    return 1;
+}

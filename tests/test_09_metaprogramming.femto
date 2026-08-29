@@ -1,0 +1,39 @@
+// ============================================================================
+// FILE: tests/test_09_metaprogramming.femto
+// ============================================================================
+import std::io;
+
+BUFFER_CAP :: 512;
+FLAG_ENABLED :: 1;
+
+Data :: struct {
+    int64 a;
+    int32 b;
+}
+
+#export
+main :: () -> int32 {
+    // 1. @sizeof and @alignof
+    int32 sz_data = @sizeof(Data);   // 16 bytes
+    int32 al_data = @alignof(Data);  // 8 bytes
+    int32 sz_i128 = @sizeof(int128); // 16 bytes
+
+    // 2. Static conditional compilation (#if/#else)
+    int32 branch_val = 0;
+    #if (FLAG_ENABLED == 1) {
+        branch_val = 42;
+    } #else {
+        branch_val = 999;
+    }
+
+    // 3. Explicit casting (@cast)
+    float64 f = @cast(float64, 100);
+    int32 truncated = @cast(int32, 45.99); // 45
+
+    if (sz_data == 16 && al_data == 8 && sz_i128 == 16 && branch_val == 42 &&
+        f == 100.0 && truncated == 45 && BUFFER_CAP == 512) then {
+        std::io::println("[PASS] test_09_metaprogramming");
+        return 0;
+    }
+    return 1;
+}

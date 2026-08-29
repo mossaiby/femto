@@ -35,6 +35,8 @@ private:
         return false;
     }
 
+    bool match_gt();
+
     Token expect(TokenKind kind, std::string_view msg) {
         if (current_.kind == kind) {
             Token t = current_;
