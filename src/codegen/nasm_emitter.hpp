@@ -46,6 +46,7 @@ private:
 
     int64_t eval_const_expr(const ASTExpr* expr);
     SemaType* resolve_type_node(ASTType* ty);
+    bool is_float_expr(const ASTExpr* expr);
 
     void emit_function(const ASTFunctionDecl* fn);
     void emit_statement(const ASTStmt* stmt, uint32_t& stack_offset);

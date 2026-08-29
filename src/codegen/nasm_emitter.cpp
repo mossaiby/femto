@@ -39,7 +39,6 @@ static std::string sanitize_symbol_raw(std::string_view name) {
 static std::string sanitize_nasm_identifier(std::string_view name) {
     std::string s = sanitize_symbol_raw(name);
 
-    // Prefix NASM reserved keywords, operators, and register names with '$' in operand positions
     static const std::unordered_set<std::string> nasm_keywords = {
         "abs", "fabs", "rel", "seg", "wrt", "strict", "default", "nosplit",
         "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
@@ -54,6 +53,43 @@ static std::string sanitize_nasm_identifier(std::string_view name) {
         return "$" + s;
     }
     return s;
+}
+
+bool NasmEmitter::is_float_expr(const ASTExpr* expr) {
+    if (!expr) return false;
+    if (expr->kind == ExprKind::Literal) {
+        if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`' || expr->raw_text.front() == '\'') {
+            return false;
+        }
+        return (expr->raw_text.find('.') != std::string_view::npos ||
+                expr->raw_text.find('e') != std::string_view::npos ||
+                expr->raw_text.find('E') != std::string_view::npos);
+    }
+    if (expr->kind == ExprKind::Identifier) {
+        auto it = local_vars_.find(std::string(expr->raw_text));
+        if (it != local_vars_.end() && it->second.type && it->second.type->is_floating_point()) {
+            return true;
+        }
+        return false;
+    }
+    if (expr->kind == ExprKind::Binary) {
+        if (expr->op == "+" || expr->op == "-" || expr->op == "*" || expr->op == "/") {
+            return is_float_expr(expr->left) || is_float_expr(expr->right);
+        }
+        return false;
+    }
+    if (expr->kind == ExprKind::Call) {
+        if (current_program_ && expr->left && expr->left->kind == ExprKind::Identifier) {
+            std::string callee = std::string(expr->left->raw_text);
+            for (const auto* fn : current_program_->functions) {
+                if (fn->name == callee || sanitize_symbol_raw(fn->name) == sanitize_symbol_raw(callee)) {
+                    auto* ret_ty = resolve_type_node(fn->return_type);
+                    if (ret_ty && ret_ty->is_floating_point()) return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 int64_t NasmEmitter::eval_const_expr(const ASTExpr* expr) {
@@ -178,7 +214,9 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
     text_sec_ << "    mov rbp, rsp\n";
     text_sec_ << "    sub rsp, 512\n";
 
-    const char* arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+    const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+    size_t int_idx = 0;
+    size_t flt_idx = 0;
     uint32_t stack_off = 0;
 
     for (size_t i = 0; i < fn->params.size(); ++i) {
@@ -188,20 +226,31 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
             p_ty = it != type_env_.end() ? it->second : nullptr;
         }
 
-        if (p_ty && p_ty->kind == SemaType::Kind::Slice) {
+        if (p_ty && p_ty->is_floating_point()) {
+            stack_off += 8;
+            VarInfo vi{ stack_off, p_ty };
+            local_vars_[std::string(fn->params[i].name)] = vi;
+            if (flt_idx < 8) {
+                if (p_ty->size_bytes == 4) {
+                    text_sec_ << "    movss [rbp - " << stack_off << "], xmm" << flt_idx++ << "\n";
+                } else {
+                    text_sec_ << "    movsd [rbp - " << stack_off << "], xmm" << flt_idx++ << "\n";
+                }
+            }
+        } else if (p_ty && p_ty->kind == SemaType::Kind::Slice) {
             stack_off += 16;
             VarInfo vi{ stack_off, p_ty };
             local_vars_[std::string(fn->params[i].name)] = vi;
-            if (i * 2 + 1 < 6) {
-                text_sec_ << "    mov [rbp - " << stack_off << "], " << arg_regs[i * 2] << "\n";
-                text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], " << arg_regs[i * 2 + 1] << "\n";
+            if (int_idx * 2 + 1 < 6) {
+                text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs[int_idx * 2] << "\n";
+                text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], " << int_arg_regs[int_idx * 2 + 1] << "\n";
             }
         } else {
             stack_off += 8;
             VarInfo vi{ stack_off, p_ty };
             local_vars_[std::string(fn->params[i].name)] = vi;
-            if (i < 6) {
-                text_sec_ << "    mov [rbp - " << stack_off << "], " << arg_regs[i] << "\n";
+            if (int_idx < 6) {
+                text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs[int_idx++] << "\n";
             }
         }
     }
@@ -362,6 +411,13 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
                         text_sec_ << "    mov r8, [rsi + " << b << "]\n";
                         text_sec_ << "    mov [rdi + " << b << "], r8\n";
                     }
+                } else if (v_ty && v_ty->is_floating_point()) {
+                    emit_expression(stmt->init_expr);
+                    if (v_ty->size_bytes == 4) {
+                        text_sec_ << "    movss [rbp - " << stack_offset << "], xmm0\n";
+                    } else {
+                        text_sec_ << "    movsd [rbp - " << stack_offset << "], xmm0\n";
+                    }
                 } else {
                     emit_expression(stmt->init_expr);
                     if (v_ty && (v_ty->kind == SemaType::Kind::Pointer || v_ty->size_bytes == 8)) {
@@ -383,11 +439,19 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             break;
         }
         case StmtKind::Assignment: {
-            emit_expression(stmt->value_expr);
-            text_sec_ << "    push rax\n";
-            emit_lvalue_address(stmt->target_expr);
-            text_sec_ << "    pop rbx\n";
-            text_sec_ << "    mov [rax], rbx\n";
+            if (is_float_expr(stmt->target_expr) || is_float_expr(stmt->value_expr)) {
+                emit_expression(stmt->value_expr);
+                text_sec_ << "    sub rsp, 8\n    movsd [rsp], xmm0\n";
+                emit_lvalue_address(stmt->target_expr);
+                text_sec_ << "    movsd xmm0, [rsp]\n    add rsp, 8\n";
+                text_sec_ << "    movsd [rax], xmm0\n";
+            } else {
+                emit_expression(stmt->value_expr);
+                text_sec_ << "    push rax\n";
+                emit_lvalue_address(stmt->target_expr);
+                text_sec_ << "    pop rbx\n";
+                text_sec_ << "    mov [rax], rbx\n";
+            }
             break;
         }
         case StmtKind::CompoundAssignment: {
@@ -631,6 +695,12 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 }
                 rodata_sec_ << "0\n";
                 text_sec_ << "    lea rax, [rel " << str_lbl << "]\n";
+            } else if (is_float_expr(expr)) {
+                std::string flt_lbl = next_label("L_f64");
+                std::string clean;
+                for (char c : expr->raw_text) if (c != '_') clean.push_back(c);
+                rodata_sec_ << flt_lbl << ": dq " << clean << "\n";
+                text_sec_ << "    movsd xmm0, [rel " << flt_lbl << "]\n";
             } else if (expr->raw_text == "true") {
                 text_sec_ << "    mov eax, 1\n";
             } else if (expr->raw_text == "false") {
@@ -689,7 +759,13 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
 
             auto it = local_vars_.find(std::string(expr->raw_text));
             if (it != local_vars_.end()) {
-                if (it->second.type && (it->second.type->kind == SemaType::Kind::Struct || it->second.type->kind == SemaType::Kind::Array)) {
+                if (it->second.type && it->second.type->is_floating_point()) {
+                    if (it->second.type->size_bytes == 4) {
+                        text_sec_ << "    movss xmm0, [rbp - " << it->second.stack_offset << "]\n";
+                    } else {
+                        text_sec_ << "    movsd xmm0, [rbp - " << it->second.stack_offset << "]\n";
+                    }
+                } else if (it->second.type && (it->second.type->kind == SemaType::Kind::Struct || it->second.type->kind == SemaType::Kind::Array)) {
                     text_sec_ << "    lea rax, [rbp - " << it->second.stack_offset << "]\n";
                 } else if (it->second.type && (it->second.type->kind == SemaType::Kind::Pointer || it->second.type->size_bytes == 8)) {
                     text_sec_ << "    mov rax, [rbp - " << it->second.stack_offset << "]\n";
@@ -739,8 +815,13 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 }
                 text_sec_ << "    xor eax, eax\n";
             } else if (expr->op == "-") {
-                emit_expression(expr->left);
-                text_sec_ << "    neg eax\n";
+                if (is_float_expr(expr->left)) {
+                    emit_expression(expr->left);
+                    text_sec_ << "    xorpd xmm1, xmm1\n    subsd xmm1, xmm0\n    movsd xmm0, xmm1\n";
+                } else {
+                    emit_expression(expr->left);
+                    text_sec_ << "    neg eax\n";
+                }
             } else if (expr->op == "!") {
                 emit_expression(expr->left);
                 text_sec_ << "    test eax, eax\n    sete al\n    movzx eax, al\n";
@@ -803,7 +884,28 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 text_sec_ << "    cmp eax, 0\n    jne " << tlbl << "\n    xor eax, eax\n    jmp " << elbl << "\n" << tlbl << ":\n    mov eax, 1\n" << elbl << ":\n";
                 return;
             }
-            emit_expression(expr->left); text_sec_ << "    push rax\n";
+
+            if (is_float_expr(expr->left) || is_float_expr(expr->right)) {
+                emit_expression(expr->left);
+                text_sec_ << "    sub rsp, 8\n    movsd [rsp], xmm0\n";
+                emit_expression(expr->right);
+                text_sec_ << "    movsd xmm1, xmm0\n";
+                text_sec_ << "    movsd xmm0, [rsp]\n    add rsp, 8\n";
+
+                if (expr->op == "+")      text_sec_ << "    addsd xmm0, xmm1\n";
+                else if (expr->op == "-") text_sec_ << "    subsd xmm0, xmm1\n";
+                else if (expr->op == "*") text_sec_ << "    mulsd xmm0, xmm1\n";
+                else if (expr->op == "/") text_sec_ << "    divsd xmm0, xmm1\n";
+                else if (expr->op == "==") text_sec_ << "    ucomisd xmm0, xmm1\n    sete al\n    setnp bl\n    and al, bl\n    movzx eax, al\n";
+                else if (expr->op == "!=") text_sec_ << "    ucomisd xmm0, xmm1\n    setne al\n    setp bl\n    or al, bl\n    movzx eax, al\n";
+                else if (expr->op == "<")  text_sec_ << "    ucomisd xmm0, xmm1\n    setb al\n    movzx eax, al\n";
+                else if (expr->op == "<=") text_sec_ << "    ucomisd xmm0, xmm1\n    setbe al\n    movzx eax, al\n";
+                else if (expr->op == ">")  text_sec_ << "    ucomisd xmm0, xmm1\n    seta al\n    movzx eax, al\n";
+                else if (expr->op == ">=") text_sec_ << "    ucomisd xmm0, xmm1\n    setae al\n    movzx eax, al\n";
+                return;
+            }
+
+            emit_expression(expr->left);  text_sec_ << "    push rax\n";
             emit_expression(expr->right); text_sec_ << "    mov rbx, rax\n    pop rax\n";
             if (expr->op == "+") text_sec_ << "    add rax, rbx\n";
             else if (expr->op == "-") text_sec_ << "    sub rax, rbx\n";
@@ -819,30 +921,55 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             break;
         }
         case ExprKind::Call: {
-            const char* arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
-            size_t reg_idx = 0;
-            for (size_t i = 0; i < expr->args.size() && reg_idx < 6; ++i) {
-                bool is_slice = false;
-                if (expr->args[i]->kind == ExprKind::Identifier) {
-                    auto it = local_vars_.find(std::string(expr->args[i]->raw_text));
-                    if (it != local_vars_.end() && it->second.type && it->second.type->kind == SemaType::Kind::Slice) {
-                        is_slice = true;
-                    }
-                }
-                if (is_slice) {
+            const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+            
+            // Analyze each arg type to preserve calling convention
+            std::vector<bool> is_float_arg;
+            for (size_t i = 0; i < expr->args.size(); ++i) {
+                is_float_arg.push_back(is_float_expr(expr->args[i]));
+            }
+
+            for (size_t i = 0; i < expr->args.size(); ++i) {
+                if (is_float_arg[i]) {
                     emit_expression(expr->args[i]);
-                    text_sec_ << "    push rax\n";
-                    text_sec_ << "    push rdx\n";
-                    reg_idx += 2;
+                    text_sec_ << "    sub rsp, 8\n    movsd [rsp], xmm0\n";
                 } else {
                     emit_expression(expr->args[i]);
                     text_sec_ << "    push rax\n";
-                    reg_idx += 1;
                 }
             }
 
-            for (int r = (int)reg_idx - 1; r >= 0; --r) {
-                text_sec_ << "    pop " << arg_regs[r] << "\n";
+            // Pop in reverse order to correct registers
+            int int_count = 0;
+            int flt_count = 0;
+            for (size_t i = 0; i < expr->args.size(); ++i) {
+                if (is_float_arg[i]) flt_count++;
+                else int_count++;
+            }
+
+            int cur_flt = flt_count - 1;
+            int cur_int = int_count - 1;
+
+            for (int i = (int)expr->args.size() - 1; i >= 0; --i) {
+                if (is_float_arg[i]) {
+                    if (cur_flt < 8) {
+                        text_sec_ << "    movsd xmm" << cur_flt << ", [rsp]\n    add rsp, 8\n";
+                    } else {
+                        text_sec_ << "    add rsp, 8\n";
+                    }
+                    cur_flt--;
+                } else {
+                    if (cur_int < 6) {
+                        text_sec_ << "    pop " << int_arg_regs[cur_int] << "\n";
+                    } else {
+                        text_sec_ << "    add rsp, 8\n";
+                    }
+                    cur_int--;
+                }
+            }
+
+            if (flt_count > 0) {
+                text_sec_ << "    mov al, " << std::min(flt_count, 8) << "\n";
             }
 
             if (expr->left && expr->left->kind == ExprKind::Identifier) {

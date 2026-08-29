@@ -41,6 +41,12 @@ struct SemaType {
         auto pk = std::get<PrimitiveTypeInfo>(data).kind;
         return (pk >= TokenKind::KwInt8 && pk <= TokenKind::KwUint512);
     }
+
+    bool is_floating_point() const {
+        if (kind != Kind::Primitive) return false;
+        auto pk = std::get<PrimitiveTypeInfo>(data).kind;
+        return (pk == TokenKind::KwFloat16 || pk == TokenKind::KwFloat32 || pk == TokenKind::KwFloat64 || pk == TokenKind::KwFloat128);
+    }
 };
 
 class TypeChecker {

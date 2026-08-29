@@ -16,8 +16,10 @@ std::string TypeChecker::get_type_name(const ASTType* ty) {
             case TokenKind::KwUint16: return "uint16";
             case TokenKind::KwUint32: return "uint32";
             case TokenKind::KwUint64: return "uint64";
+            case TokenKind::KwFloat16: return "float16";
             case TokenKind::KwFloat32: return "float32";
             case TokenKind::KwFloat64: return "float64";
+            case TokenKind::KwFloat128: return "float128";
             case TokenKind::KwBool8: return "bool8";
             case TokenKind::KwChar8: return "char8";
             case TokenKind::KwString8: return "string8";
@@ -60,8 +62,10 @@ void TypeChecker::init_primitives() {
     type_env_["uint16"]   = make_prim(TokenKind::KwUint16, 2);
     type_env_["uint32"]   = make_prim(TokenKind::KwUint32, 4);
     type_env_["uint64"]   = make_prim(TokenKind::KwUint64, 8);
+    type_env_["float16"]  = make_prim(TokenKind::KwFloat16, 2);
     type_env_["float32"]  = make_prim(TokenKind::KwFloat32, 4);
     type_env_["float64"]  = make_prim(TokenKind::KwFloat64, 8);
+    type_env_["float128"] = make_prim(TokenKind::KwFloat128, 16);
     type_env_["bool8"]    = make_prim(TokenKind::KwBool8, 1);
     type_env_["char8"]    = make_prim(TokenKind::KwChar8, 1);
     type_env_["string8"]  = make_prim(TokenKind::KwString8, 8);
@@ -449,8 +453,20 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
     if (!expr) return nullptr;
 
     switch (expr->kind) {
-        case ExprKind::Literal:
+        case ExprKind::Literal: {
+            if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`') {
+                return type_env_["string8"];
+            }
+            if (expr->raw_text.front() == '\'') {
+                return type_env_["char8"];
+            }
+            if (expr->raw_text.find('.') != std::string_view::npos ||
+                expr->raw_text.find('e') != std::string_view::npos ||
+                expr->raw_text.find('E') != std::string_view::npos) {
+                return type_env_["float64"];
+            }
             return type_env_["int32"];
+        }
         case ExprKind::Subject:
             return type_env_["int32"];
         case ExprKind::BuiltinSizeof:
@@ -573,8 +589,22 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
             return arr_t;
         }
         case ExprKind::Binary: {
-            check_expression(expr->left, prog);
-            check_expression(expr->right, prog);
+            auto* lt = check_expression(expr->left, prog);
+            auto* rt = check_expression(expr->right, prog);
+            if ((lt && lt->is_floating_point()) || (rt && rt->is_floating_point())) {
+                if (expr->op == "==" || expr->op == "!=" || expr->op == "<" ||
+                    expr->op == "<=" || expr->op == ">" || expr->op == ">=") {
+                    return type_env_["int32"];
+                }
+                if (expr->op == "+" || expr->op == "-" || expr->op == "*" || expr->op == "/") {
+                    if (lt && lt->size_bytes == 4 && rt && rt->size_bytes == 4) {
+                        return type_env_["float32"];
+                    }
+                    return type_env_["float64"];
+                }
+                diag_.report_error(expr->span, "invalid binary operator for floating-point operands");
+                return type_env_["float64"];
+            }
             return type_env_["int32"];
         }
         case ExprKind::Call: {
@@ -582,6 +612,15 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
                 monomorphize_function(expr, prog);
             }
             for (auto* a : expr->args) check_expression(a, prog);
+
+            if (expr->left && expr->left->kind == ExprKind::Identifier) {
+                std::string callee = std::string(expr->left->raw_text);
+                for (const auto* fn : prog.functions) {
+                    if (fn->name == callee) {
+                        return resolve_ast_type(fn->return_type);
+                    }
+                }
+            }
             return type_env_["int32"];
         }
         default:
