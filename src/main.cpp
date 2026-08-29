@@ -108,6 +108,7 @@ public:
             }
         }
         for (auto* st : prog.structs)   master_prog.structs.push_back(st);
+        for (auto* un : prog.unions)    master_prog.unions.push_back(un);
         for (auto* en : prog.enums)     master_prog.enums.push_back(en);
         for (auto* cn : prog.constants) master_prog.constants.push_back(cn);
 

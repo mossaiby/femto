@@ -1,0 +1,61 @@
+import std::io;
+
+// 1. Untagged Union for bit punning and memory overlay
+FloatIntUnion :: union {
+    int32   bits;
+    float32 val_f32;
+}
+
+// 2. Generic Union
+GenericHolder :: union <T> {
+    T     value;
+    int64 raw_bits;
+}
+
+// 3. Pointer to union mutation function
+#export
+set_union_bits :: (FloatIntUnion* u, int32 new_bits) -> void {
+    u.bits = new_bits; // auto-dereference on union pointer
+}
+
+#export
+main :: () -> int32 {
+    // Test 1: Union initialization and field access
+    FloatIntUnion u = { .bits = 1065353216 }; // IEEE-754 for 1.0f
+
+    std::io::print("1. Union integer bits: ");
+    std::io::println_int(u.bits);
+
+    float64 f_val = @cast(float64, u.val_f32);
+    std::io::print("   Union float32 value: ");
+    std::io::println_float(f_val); // Output: 1.000000
+
+    // Test 2: Pointer auto-dereference mutation on union
+    set_union_bits(&u, 1073741824); // IEEE-754 for 2.0f
+    float64 f_val2 = @cast(float64, u.val_f32);
+    std::io::print("2. Mutated float32 value via pointer: ");
+    std::io::println_float(f_val2); // Output: 2.000000
+
+    // Test 3: Generic Union instantiation (GenericHolder<int32>)
+    GenericHolder<int32> holder = { .value = 12345 };
+    std::io::print("3. Generic union value: ");
+    std::io::println_int(holder.value);
+
+    // Size of unions via @sizeof
+    int32 sz1 = @sizeof(FloatIntUnion);  // 4 bytes
+    int32 sz2 = @sizeof(GenericHolder<int32>); // 8 bytes (max of int32(4) and int64(8))
+
+    std::io::print("4. sizeof(FloatIntUnion): ");
+    std::io::println_int(sz1);
+
+    std::io::print("   sizeof(GenericHolder<int32>): ");
+    std::io::println_int(sz2);
+
+    // Verification check
+    if (f_val == 1.0 && f_val2 == 2.0 && holder.value == 12345 && sz1 == 4 && sz2 == 8) then {
+        std::io::println("5. All Phase 3 union tests passed!");
+        return 42;
+    } else {
+        return 1;
+    }
+}

@@ -107,6 +107,39 @@ void TypeChecker::compute_struct_layout(ASTStructDecl* decl, std::string custom_
     type_env_[info.name] = st;
 }
 
+void TypeChecker::compute_union_layout(ASTUnionDecl* decl, std::string custom_name) {
+    UnionTypeInfo info;
+    info.name = custom_name.empty() ? std::string(decl->name) : custom_name;
+
+    uint32_t max_size = 0;
+    uint32_t max_align = 1;
+
+    for (auto& f : decl->fields) {
+        auto* f_type = resolve_ast_type(f.type);
+        if (!f_type) f_type = type_env_["int32"];
+
+        uint32_t align = std::max(1u, f_type->align_bytes);
+        uint32_t sz = std::max(1u, f_type->size_bytes);
+
+        UnionFieldInfo fi;
+        fi.name = std::string(f.name);
+        fi.type = f_type;
+        fi.offset = 0;
+
+        info.field_map[fi.name] = info.fields.size();
+        info.fields.push_back(fi);
+
+        max_size = std::max(max_size, sz);
+        max_align = std::max(max_align, align);
+    }
+
+    uint32_t total_size = (max_size + max_align - 1) & ~(max_align - 1);
+    if (total_size == 0) total_size = 1;
+
+    auto* un = new SemaType{SemaType::Kind::Union, total_size, max_align, info};
+    type_env_[info.name] = un;
+}
+
 std::string TypeChecker::monomorphize_struct(ASTType* generic_ty) {
     std::string mangled = std::string(generic_ty->custom_name);
     for (auto* a : generic_ty->generic_args) {
@@ -140,6 +173,39 @@ std::string TypeChecker::monomorphize_struct(ASTType* generic_ty) {
     return mangled;
 }
 
+std::string TypeChecker::monomorphize_union(ASTType* generic_ty) {
+    std::string mangled = std::string(generic_ty->custom_name);
+    for (auto* a : generic_ty->generic_args) {
+        mangled += "__" + get_type_name(a);
+    }
+
+    if (type_env_.find(mangled) != type_env_.end()) {
+        return mangled;
+    }
+
+    auto it = generic_unions_.find(std::string(generic_ty->custom_name));
+    if (it == generic_unions_.end()) return mangled;
+
+    ASTUnionDecl* orig = it->second;
+    std::unordered_map<std::string, ASTType*> subst;
+    for (size_t i = 0; i < orig->generic_params.size() && i < generic_ty->generic_args.size(); ++i) {
+        subst[std::string(orig->generic_params[i])] = generic_ty->generic_args[i];
+    }
+
+    auto* concrete_decl = arena_.allocate<ASTUnionDecl>();
+    concrete_decl->name = generic_ty->custom_name;
+    for (auto& f : orig->fields) {
+        ASTUnionField cf;
+        cf.name = f.name;
+        cf.type = clone_and_substitute_type(f.type, subst);
+        cf.default_value = f.default_value;
+        concrete_decl->fields.push_back(cf);
+    }
+
+    compute_union_layout(concrete_decl, mangled);
+    return mangled;
+}
+
 std::string TypeChecker::monomorphize_function(ASTExpr* call_expr, ASTProgram& prog) {
     std::string orig_name = std::string(call_expr->left->raw_text);
     std::string mangled = orig_name;
@@ -147,7 +213,6 @@ std::string TypeChecker::monomorphize_function(ASTExpr* call_expr, ASTProgram& p
         mangled += "__" + get_type_name(a);
     }
 
-    // Check if already monomorphized
     for (auto* fn : prog.functions) {
         if (fn->name == mangled) {
             call_expr->left->raw_text = fn->name;
@@ -230,6 +295,8 @@ ASTStmt* TypeChecker::clone_and_substitute_stmt(ASTStmt* stmt, const std::unorde
     *cs = *stmt;
     if (stmt->type_annot) cs->type_annot = clone_and_substitute_type(stmt->type_annot, subst);
     cs->init_expr = clone_and_substitute_expr(stmt->init_expr, subst);
+    cs->init_stmt = clone_and_substitute_stmt(stmt->init_stmt, subst);
+    cs->step_stmt = clone_and_substitute_stmt(stmt->step_stmt, subst);
     cs->target_expr = clone_and_substitute_expr(stmt->target_expr, subst);
     cs->value_expr = clone_and_substitute_expr(stmt->value_expr, subst);
     cs->condition = clone_and_substitute_expr(stmt->condition, subst);
@@ -305,6 +372,10 @@ SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
             std::string mangled = monomorphize_struct(ast_ty);
             auto it = type_env_.find(mangled);
             if (it != type_env_.end()) return it->second;
+
+            std::string mangled_u = monomorphize_union(ast_ty);
+            auto u_it = type_env_.find(mangled_u);
+            if (u_it != type_env_.end()) return u_it->second;
         }
         auto it = type_env_.find(std::string(ast_ty->custom_name));
         if (it != type_env_.end()) return it->second;
@@ -393,6 +464,15 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgr
             current_loop_depth_--;
             break;
         }
+        case StmtKind::For: {
+            current_loop_depth_++;
+            if (stmt->init_stmt) check_statement(stmt->init_stmt, return_type, prog);
+            if (stmt->condition) check_expression(stmt->condition, prog);
+            if (stmt->step_stmt) check_statement(stmt->step_stmt, return_type, prog);
+            for (auto* s : stmt->then_block) check_statement(s, return_type, prog);
+            current_loop_depth_--;
+            break;
+        }
         case StmtKind::Switch: {
             current_loop_depth_++;
             check_expression(stmt->condition, prog);
@@ -472,9 +552,14 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
         case ExprKind::BuiltinSizeof:
         case ExprKind::BuiltinAlignof:
             return type_env_["int32"];
-        case ExprKind::BuiltinBitcast:
+        case ExprKind::Cast: {
             check_expression(expr->left, prog);
             return resolve_ast_type(expr->target_type);
+        }
+        case ExprKind::BuiltinBitcast: {
+            check_expression(expr->left, prog);
+            return resolve_ast_type(expr->target_type);
+        }
         case ExprKind::Identifier: {
             auto sep = expr->raw_text.find("::");
             if (sep != std::string_view::npos) {
@@ -539,6 +624,13 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
                     auto f_it = s_info.field_map.find(std::string(expr->raw_text));
                     if (f_it != s_info.field_map.end()) {
                         return s_info.fields[f_it->second].type;
+                    }
+                }
+                if (base_t && base_t->kind == SemaType::Kind::Union) {
+                    auto& u_info = std::get<UnionTypeInfo>(base_t->data);
+                    auto f_it = u_info.field_map.find(std::string(expr->raw_text));
+                    if (f_it != u_info.field_map.end()) {
+                        return u_info.fields[f_it->second].type;
                     }
                 }
                 if (base_t && base_t->kind == SemaType::Kind::Slice && expr->raw_text == "length") {
@@ -643,7 +735,7 @@ bool TypeChecker::check_program(ASTProgram& prog) {
         }
     }
 
-    // 3. Collect Generic Templates vs Concrete Structs
+    // 3. Collect Structs (Generic vs Concrete)
     for (auto* st : prog.structs) {
         if (!st->generic_params.empty()) {
             generic_structs_[std::string(st->name)] = st;
@@ -652,14 +744,23 @@ bool TypeChecker::check_program(ASTProgram& prog) {
         }
     }
 
-    // 4. Collect Generic Functions
+    // 4. Collect Unions (Generic vs Concrete)
+    for (auto* un : prog.unions) {
+        if (!un->generic_params.empty()) {
+            generic_unions_[std::string(un->name)] = un;
+        } else {
+            compute_union_layout(un);
+        }
+    }
+
+    // 5. Collect Generic Functions
     for (auto* fn : prog.functions) {
         if (!fn->generic_params.empty()) {
             generic_functions_[std::string(fn->name)] = fn;
         }
     }
 
-    // 5. Typecheck Functions
+    // 6. Typecheck Functions
     size_t i = 0;
     while (i < prog.functions.size()) {
         auto* fn = prog.functions[i];

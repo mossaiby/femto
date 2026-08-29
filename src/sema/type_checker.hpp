@@ -30,11 +30,23 @@ struct StructTypeInfo {
     std::unordered_map<std::string, size_t> field_map;
 };
 
+struct UnionFieldInfo {
+    std::string name;
+    SemaType* type;
+    uint32_t offset = 0;
+};
+
+struct UnionTypeInfo {
+    std::string name;
+    std::vector<UnionFieldInfo> fields;
+    std::unordered_map<std::string, size_t> field_map;
+};
+
 struct SemaType {
-    enum class Kind { Primitive, Pointer, Array, Slice, Result, Struct } kind;
+    enum class Kind { Primitive, Pointer, Array, Slice, Result, Struct, Union } kind;
     uint32_t size_bytes = 0;
     uint32_t align_bytes = 0;
-    std::variant<PrimitiveTypeInfo, PointerTypeInfo, ArrayTypeInfo, SliceTypeInfo, ResultTypeInfo, StructTypeInfo> data;
+    std::variant<PrimitiveTypeInfo, PointerTypeInfo, ArrayTypeInfo, SliceTypeInfo, ResultTypeInfo, StructTypeInfo, UnionTypeInfo> data;
 
     bool is_integer() const {
         if (kind != Kind::Primitive) return false;
@@ -72,11 +84,13 @@ private:
     std::unordered_map<std::string, int64_t> const_defs_;
     std::unordered_map<std::string, SemaType*> symbol_table_;
     std::unordered_map<std::string, ASTStructDecl*> generic_structs_;
+    std::unordered_map<std::string, ASTUnionDecl*> generic_unions_;
     std::unordered_map<std::string, ASTFunctionDecl*> generic_functions_;
     uint32_t current_loop_depth_ = 0;
 
     void init_primitives();
     void compute_struct_layout(ASTStructDecl* decl, std::string custom_name = "");
+    void compute_union_layout(ASTUnionDecl* decl, std::string custom_name = "");
     void check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgram& prog);
     SemaType* check_expression(ASTExpr* expr, ASTProgram& prog);
 
@@ -84,6 +98,7 @@ private:
 
     // Monomorphization
     std::string monomorphize_struct(ASTType* generic_ty);
+    std::string monomorphize_union(ASTType* generic_ty);
     std::string monomorphize_function(ASTExpr* call_expr, ASTProgram& prog);
     ASTType* clone_and_substitute_type(ASTType* ty, const std::unordered_map<std::string, ASTType*>& subst);
     ASTExpr* clone_and_substitute_expr(ASTExpr* expr, const std::unordered_map<std::string, ASTType*>& subst);

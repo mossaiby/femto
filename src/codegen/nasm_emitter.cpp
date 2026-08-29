@@ -65,12 +65,39 @@ bool NasmEmitter::is_float_expr(const ASTExpr* expr) {
                 expr->raw_text.find('e') != std::string_view::npos ||
                 expr->raw_text.find('E') != std::string_view::npos);
     }
+    if (expr->kind == ExprKind::Cast) {
+        auto* target_ty = resolve_type_node(expr->target_type);
+        return target_ty && target_ty->is_floating_point();
+    }
     if (expr->kind == ExprKind::Identifier) {
         auto it = local_vars_.find(std::string(expr->raw_text));
         if (it != local_vars_.end() && it->second.type && it->second.type->is_floating_point()) {
             return true;
         }
         return false;
+    }
+    if (expr->kind == ExprKind::MemberAccess) {
+        if (expr->left && expr->left->kind == ExprKind::Identifier) {
+            auto it = local_vars_.find(std::string(expr->left->raw_text));
+            if (it != local_vars_.end() && it->second.type) {
+                auto* ty = it->second.type;
+                if (ty->kind == SemaType::Kind::Pointer) ty = std::get<PointerTypeInfo>(ty->data).pointee;
+                if (ty && ty->kind == SemaType::Kind::Struct) {
+                    auto& s_info = std::get<StructTypeInfo>(ty->data);
+                    auto f_it = s_info.field_map.find(std::string(expr->raw_text));
+                    if (f_it != s_info.field_map.end() && s_info.fields[f_it->second].type) {
+                        return s_info.fields[f_it->second].type->is_floating_point();
+                    }
+                }
+                if (ty && ty->kind == SemaType::Kind::Union) {
+                    auto& u_info = std::get<UnionTypeInfo>(ty->data);
+                    auto f_it = u_info.field_map.find(std::string(expr->raw_text));
+                    if (f_it != u_info.field_map.end() && u_info.fields[f_it->second].type) {
+                        return u_info.fields[f_it->second].type->is_floating_point();
+                    }
+                }
+            }
+        }
     }
     if (expr->kind == ExprKind::Binary) {
         if (expr->op == "+" || expr->op == "-" || expr->op == "*" || expr->op == "/") {
@@ -288,7 +315,7 @@ void NasmEmitter::emit_lvalue_address(const ASTExpr* lval) {
                     if (it->second.type->kind == SemaType::Kind::Pointer) {
                         is_ptr = true;
                         st_type = std::get<PointerTypeInfo>(it->second.type->data).pointee;
-                    } else if (it->second.type->kind == SemaType::Kind::Struct) {
+                    } else if (it->second.type->kind == SemaType::Kind::Struct || it->second.type->kind == SemaType::Kind::Union) {
                         st_type = it->second.type;
                     }
                 }
@@ -306,6 +333,7 @@ void NasmEmitter::emit_lvalue_address(const ASTExpr* lval) {
                     }
                 }
             }
+            // For union, all field offsets are 0, rax is already base address
             break;
         }
         case ExprKind::Index: {
@@ -364,17 +392,40 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             local_vars_[std::string(stmt->name)] = vi;
 
             if (stmt->init_expr) {
-                if (stmt->init_expr->kind == ExprKind::StructLiteral && v_ty && v_ty->kind == SemaType::Kind::Struct) {
-                    auto& s_info = std::get<StructTypeInfo>(v_ty->data);
-                    for (auto& sf : stmt->init_expr->struct_fields) {
-                        auto f_it = s_info.field_map.find(std::string(sf.first));
-                        if (f_it != s_info.field_map.end()) {
-                            uint32_t f_off = s_info.fields[f_it->second].offset;
-                            emit_expression(sf.second);
-                            if (s_info.fields[f_it->second].type && s_info.fields[f_it->second].type->size_bytes == 8) {
-                                text_sec_ << "    mov [rbp - " << (stack_offset - f_off) << "], rax\n";
-                            } else {
-                                text_sec_ << "    mov [rbp - " << (stack_offset - f_off) << "], eax\n";
+                if (stmt->init_expr->kind == ExprKind::StructLiteral && v_ty && (v_ty->kind == SemaType::Kind::Struct || v_ty->kind == SemaType::Kind::Union)) {
+                    if (v_ty->kind == SemaType::Kind::Struct) {
+                        auto& s_info = std::get<StructTypeInfo>(v_ty->data);
+                        for (auto& sf : stmt->init_expr->struct_fields) {
+                            auto f_it = s_info.field_map.find(std::string(sf.first));
+                            if (f_it != s_info.field_map.end()) {
+                                uint32_t f_off = s_info.fields[f_it->second].offset;
+                                auto* f_ty = s_info.fields[f_it->second].type;
+                                emit_expression(sf.second);
+                                if (f_ty && f_ty->is_floating_point()) {
+                                    if (f_ty->size_bytes == 4) text_sec_ << "    movss [rbp - " << (stack_offset - f_off) << "], xmm0\n";
+                                    else text_sec_ << "    movsd [rbp - " << (stack_offset - f_off) << "], xmm0\n";
+                                } else if (f_ty && f_ty->size_bytes == 8) {
+                                    text_sec_ << "    mov [rbp - " << (stack_offset - f_off) << "], rax\n";
+                                } else {
+                                    text_sec_ << "    mov [rbp - " << (stack_offset - f_off) << "], eax\n";
+                                }
+                            }
+                        }
+                    } else if (v_ty->kind == SemaType::Kind::Union) {
+                        auto& u_info = std::get<UnionTypeInfo>(v_ty->data);
+                        for (auto& sf : stmt->init_expr->struct_fields) {
+                            auto f_it = u_info.field_map.find(std::string(sf.first));
+                            if (f_it != u_info.field_map.end()) {
+                                auto* f_ty = u_info.fields[f_it->second].type;
+                                emit_expression(sf.second);
+                                if (f_ty && f_ty->is_floating_point()) {
+                                    if (f_ty->size_bytes == 4) text_sec_ << "    movss [rbp - " << stack_offset << "], xmm0\n";
+                                    else text_sec_ << "    movsd [rbp - " << stack_offset << "], xmm0\n";
+                                } else if (f_ty && f_ty->size_bytes == 8) {
+                                    text_sec_ << "    mov [rbp - " << stack_offset << "], rax\n";
+                                } else {
+                                    text_sec_ << "    mov [rbp - " << stack_offset << "], eax\n";
+                                }
                             }
                         }
                     }
@@ -403,7 +454,7 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
 
                     text_sec_ << "    mov [rbp - " << stack_offset << "], rdx\n";
                     text_sec_ << "    mov [rbp - " << (stack_offset - 8) << "], rbx\n";
-                } else if (v_ty && v_ty->kind == SemaType::Kind::Struct) {
+                } else if (v_ty && (v_ty->kind == SemaType::Kind::Struct || v_ty->kind == SemaType::Kind::Union)) {
                     emit_expression(stmt->init_expr);
                     text_sec_ << "    mov rsi, rax\n";
                     text_sec_ << "    lea rdi, [rbp - " << stack_offset << "]\n";
@@ -518,6 +569,36 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             text_sec_ << cond_lbl << ":\n";
             emit_expression(stmt->condition);
             text_sec_ << "    cmp eax, 0\n    jne " << start_lbl << "\n" << break_lbl << ":\n";
+            loop_stack_.pop_back();
+            break;
+        }
+        case StmtKind::For: {
+            std::string cond_lbl  = next_label("L_for_cond");
+            std::string step_lbl  = next_label("L_for_step");
+            std::string break_lbl = next_label("L_for_break");
+
+            loop_stack_.push_back({step_lbl, break_lbl});
+
+            if (stmt->init_stmt) {
+                emit_statement(stmt->init_stmt, stack_offset);
+            }
+
+            text_sec_ << cond_lbl << ":\n";
+            if (stmt->condition) {
+                emit_expression(stmt->condition);
+                text_sec_ << "    cmp eax, 0\n    je " << break_lbl << "\n";
+            }
+
+            for (auto* s : stmt->then_block) emit_statement(s, stack_offset);
+
+            text_sec_ << step_lbl << ":\n";
+            if (stmt->step_stmt) {
+                emit_statement(stmt->step_stmt, stack_offset);
+            }
+
+            text_sec_ << "    jmp " << cond_lbl << "\n";
+            text_sec_ << break_lbl << ":\n";
+
             loop_stack_.pop_back();
             break;
         }
@@ -732,6 +813,42 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             text_sec_ << "    mov eax, " << al << "\n";
             break;
         }
+        case ExprKind::Cast: {
+            bool src_is_flt = is_float_expr(expr->left);
+            auto* dst_ty = resolve_type_node(expr->target_type);
+            bool dst_is_flt = dst_ty && dst_ty->is_floating_point();
+
+            emit_expression(expr->left);
+
+            if (src_is_flt && !dst_is_flt) {
+                if (dst_ty && dst_ty->size_bytes == 8) {
+                    text_sec_ << "    cvttsd2si rax, xmm0\n";
+                } else {
+                    text_sec_ << "    cvttsd2si eax, xmm0\n";
+                }
+            } else if (!src_is_flt && dst_is_flt) {
+                if (dst_ty && dst_ty->size_bytes == 4) {
+                    text_sec_ << "    cvtsi2ss xmm0, rax\n";
+                } else {
+                    text_sec_ << "    cvtsi2sd xmm0, rax\n";
+                }
+            } else if (src_is_flt && dst_is_flt) {
+                if (dst_ty && dst_ty->size_bytes == 4) {
+                    text_sec_ << "    cvtsd2ss xmm0, xmm0\n";
+                } else {
+                    text_sec_ << "    cvtss2sd xmm0, xmm0\n";
+                }
+            } else {
+                if (dst_ty && dst_ty->size_bytes == 8) {
+                    text_sec_ << "    movsxd rax, eax\n";
+                } else if (dst_ty && dst_ty->size_bytes == 2) {
+                    text_sec_ << "    movzx eax, ax\n";
+                } else if (dst_ty && dst_ty->size_bytes == 1) {
+                    text_sec_ << "    movzx eax, al\n";
+                }
+            }
+            break;
+        }
         case ExprKind::BuiltinBitcast: {
             emit_expression(expr->left);
             break;
@@ -765,7 +882,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                     } else {
                         text_sec_ << "    movsd xmm0, [rbp - " << it->second.stack_offset << "]\n";
                     }
-                } else if (it->second.type && (it->second.type->kind == SemaType::Kind::Struct || it->second.type->kind == SemaType::Kind::Array)) {
+                } else if (it->second.type && (it->second.type->kind == SemaType::Kind::Struct || it->second.type->kind == SemaType::Kind::Union || it->second.type->kind == SemaType::Kind::Array)) {
                     text_sec_ << "    lea rax, [rbp - " << it->second.stack_offset << "]\n";
                 } else if (it->second.type && (it->second.type->kind == SemaType::Kind::Pointer || it->second.type->size_bytes == 8)) {
                     text_sec_ << "    mov rax, [rbp - " << it->second.stack_offset << "]\n";
@@ -784,7 +901,11 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 text_sec_ << "    mov eax, [rax + 8]\n";
             } else {
                 emit_lvalue_address(expr);
-                text_sec_ << "    mov rax, [rax]\n";
+                if (is_float_expr(expr)) {
+                    text_sec_ << "    movsd xmm0, [rax]\n";
+                } else {
+                    text_sec_ << "    mov rax, [rax]\n";
+                }
             }
             break;
         }
@@ -923,7 +1044,6 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
         case ExprKind::Call: {
             const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
             
-            // Analyze each arg type to preserve calling convention
             std::vector<bool> is_float_arg;
             for (size_t i = 0; i < expr->args.size(); ++i) {
                 is_float_arg.push_back(is_float_expr(expr->args[i]));
@@ -939,7 +1059,6 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 }
             }
 
-            // Pop in reverse order to correct registers
             int int_count = 0;
             int flt_count = 0;
             for (size_t i = 0; i < expr->args.size(); ++i) {

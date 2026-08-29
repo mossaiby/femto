@@ -49,6 +49,7 @@ private:
     void parse_top_level_declaration(ASTProgram& prog, bool is_exported = false);
     ASTFunctionDecl* parse_function_decl(std::string_view name, std::vector<std::string_view> generic_params, bool is_exported, bool is_extern_c = false);
     ASTStructDecl* parse_struct_decl(std::string_view name, bool is_exported);
+    ASTUnionDecl* parse_union_decl(std::string_view name, bool is_exported);
     ASTEnumDecl* parse_enum_decl(std::string_view name, bool is_exported);
     ASTConstDecl* parse_const_decl(std::string_view name, bool is_exported);
 
@@ -60,6 +61,7 @@ private:
     ASTStmt* parse_if_stmt();
     ASTStmt* parse_while_stmt();
     ASTStmt* parse_do_while_stmt();
+    ASTStmt* parse_for_stmt();
     ASTStmt* parse_switch_stmt();
     ASTStmt* parse_foreach_stmt();
     ASTStmt* parse_break_stmt();

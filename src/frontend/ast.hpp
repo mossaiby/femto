@@ -32,7 +32,7 @@ enum class ExprKind {
     Literal, Identifier, Binary, Unary, PostfixUnwrap,
     Cast, LossyCast, Bitcast, Match, Call, MemberAccess,
     Index, SliceSubrange, StructLiteral, ArrayLiteral, Subject,
-    BuiltinSizeof, BuiltinAlignof, BuiltinBitcast
+    BuiltinSizeof, BuiltinAlignof, BuiltinBitcast, BuiltinCast
 };
 
 struct ASTMatchArm {
@@ -59,7 +59,7 @@ struct ASTExpr {
 
 enum class StmtKind {
     VarDecl, ConstDecl, Assignment, CompoundAssignment,
-    Increment, Decrement, If, While, DoWhile, Switch,
+    Increment, Decrement, If, While, DoWhile, For, Switch,
     Foreach, Break, Continue, Return, ResultBranch, ExprStmt,
     HashIf
 };
@@ -89,6 +89,10 @@ struct ASTStmt {
     std::vector<ASTStmt*> then_block;
     std::vector<ASTStmt*> else_block;
     std::vector<ASTSwitchCase> switch_cases;
+
+    // For Loop (3-clause)
+    ASTStmt* init_stmt = nullptr;
+    ASTStmt* step_stmt = nullptr;
 
     // Foreach
     std::string_view iter_idx;
@@ -138,6 +142,21 @@ struct ASTStructDecl {
     SourceSpan span;
 };
 
+struct ASTUnionField {
+    std::string_view name;
+    ASTType* type;
+    ASTExpr* default_value;
+    SourceSpan span;
+};
+
+struct ASTUnionDecl {
+    std::string_view name;
+    std::vector<std::string_view> generic_params;
+    std::vector<ASTUnionField> fields;
+    bool is_exported = false;
+    SourceSpan span;
+};
+
 struct ASTEnumVariant {
     std::string_view name;
     std::optional<int64_t> value;
@@ -164,6 +183,7 @@ struct ASTProgram {
     std::vector<std::string> imports;
     std::vector<ASTFunctionDecl*> functions;
     std::vector<ASTStructDecl*> structs;
+    std::vector<ASTUnionDecl*> unions;
     std::vector<ASTEnumDecl*> enums;
     std::vector<ASTConstDecl*> constants;
 };
