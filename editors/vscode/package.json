@@ -1,0 +1,37 @@
+{
+  "name": "femto-vscode",
+  "displayName": "Femto Language Support",
+  "description": "Rich syntax highlighting, language configuration, and brackets for the Femto systems programming language.",
+  "version": "0.1.0",
+  "publisher": "femto-lang",
+  "repository": "https://github.com/mossaiby/femto",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "femto",
+        "aliases": [
+          "Femto",
+          "femto"
+        ],
+        "extensions": [
+          ".femto",
+          ".femt"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "femto",
+        "scopeName": "source.femto",
+        "path": "./syntaxes/femto.tmLanguage.json"
+      }
+    ]
+  }
+}

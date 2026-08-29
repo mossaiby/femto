@@ -2,7 +2,7 @@
 
 Femto is a modern, statically typed, compiled systems programming language designed for deterministic performance, high safety guarantees, and low-level control without runtime overhead.
 
-This repository contains the language specification, the standard library, and the reference compiler implementation written in ISO C++20 targeting x86-64 Linux (NASM/libc/System V AMD64 ABI).
+This repository contains the language specification, the standard library, the reference compiler implementation written in ISO C++20 targeting x86-64 Linux (NASM/libc/System V AMD64 ABI), and the official Visual Studio Code syntax extension.
 
 ---
 
@@ -25,6 +25,7 @@ This repository contains the language specification, the standard library, and t
 - [ABI and Memory Layout](#abi-and-memory-layout)
 - [Compiler Architecture](#compiler-architecture)
 - [Project Layout](#project-layout)
+- [Editor Support (VS Code)](#editor-support-vs-code)
 - [Prerequisites and Toolchain](#prerequisites-and-toolchain)
 - [Building the Compiler](#building-the-compiler)
 - [Automated Test Suite](#automated-test-suite)
@@ -369,6 +370,13 @@ femto/
 │       ├── mem.femto           # Low-level memory utilities
 │       ├── string.femto        # Dynamic growable String builder
 │       └── sys.femto           # Process exit & panic utilities
+├── editors/
+│   └── vscode/                 # Visual Studio Code syntax highlighting extension
+│       ├── package.json
+│       ├── language-configuration.json
+│       ├── README.md
+│       └── syntaxes/
+│           └── femto.tmLanguage.json
 └── tests/
     ├── unit/                   # Tier 1: C++ component unit tests
     │   ├── main.cpp            # Native unit test runner entry point
@@ -385,6 +393,22 @@ femto/
     │   └── neg_05_uninitialized.femto
     └── test_*.femto            # Tier 3: End-to-end integration tests
 ```
+
+---
+
+## Editor Support (VS Code)
+
+The repository includes a syntax highlighting extension for Visual Studio Code in `editors/vscode`.
+
+To install it locally:
+```bash
+ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/femto-vscode
+```
+Or on Windows (PowerShell):
+```powershell
+New-Item -ItemType SymbolicLink -Path "$HOME\.vscode\extensions\femto-vscode" -Target "$PWD\editors\vscode"
+```
+Reload VS Code to enable syntax coloring, bracket matching, and auto-indentation for all `.femto` files.
 
 ---
 
