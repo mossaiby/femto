@@ -2,7 +2,7 @@
 
 Femto is a modern, statically typed, compiled systems programming language designed for deterministic performance, high safety guarantees, and low-level control without runtime overhead.
 
-This repository contains the language specification and the reference compiler implementation written in ISO C++26 targeting x86-64 Linux (NASM/libc).
+This repository contains the language specification, the standard library, and the reference compiler implementation written in ISO C++20 targeting x86-64 Linux (NASM/libc/System V AMD64 ABI).
 
 ---
 
@@ -10,21 +10,24 @@ This repository contains the language specification and the reference compiler i
 
 - [Key Features](#key-features)
 - [Language Specification](#language-specification)
-  - [Type System](#1-type-system)
-  - [Literals and Constants](#2-literals-and-constants)
-  - [Declarations and Mutability](#3-declarations-and-mutability)
-  - [Functions](#4-functions)
-  - [Generics](#5-generics)
-  - [Pointers, Arrays, and Slices](#6-pointers-arrays-and-slices)
-  - [Structs, Enums, and Unions](#7-structs-enums-and-unions)
-  - [Operators and Casting](#8-operators-and-casting)
-  - [Control Flow](#9-control-flow)
-  - [Error Handling (`!T` / `!void`)](#10-error-handling-t-and-void)
-  - [Modules, Visibility, and C Interop](#11-modules-visibility-and-c-interop)
-  - [Compile-Time Metaprogramming](#12-compile-time-metaprogramming)
+  - [1. Type System](#1-type-system)
+  - [2. Literals and Constants](#2-literals-and-constants)
+  - [3. Declarations and Mutability](#3-declarations-and-mutability)
+  - [4. Functions](#4-functions)
+  - [5. Generics](#5-generics)
+  - [6. Pointers, Arrays, and Slices](#6-pointers-arrays-and-slices)
+  - [7. Structs, Enums, and Unions](#7-structs-enums-and-unions)
+  - [8. Operators and Casting](#8-operators-and-casting)
+  - [9. Control Flow](#9-control-flow)
+  - [10. Error Handling (`!T` / `!void`)](#10-error-handling-t-and-void)
+  - [11. Modules, Visibility, and C Interop](#11-modules-visibility-and-c-interop)
+  - [12. Compile-Time Metaprogramming](#12-compile-time-metaprogramming)
 - [ABI and Memory Layout](#abi-and-memory-layout)
 - [Compiler Architecture](#compiler-architecture)
+- [Project Layout](#project-layout)
 - [Prerequisites and Toolchain](#prerequisites-and-toolchain)
+- [Building the Compiler](#building-the-compiler)
+- [Automated Test Suite](#automated-test-suite)
 - [Quick Start Example](#quick-start-example)
 - [License](#license)
 
@@ -33,11 +36,12 @@ This repository contains the language specification and the reference compiler i
 ## Key Features
 
 - **No Undefined States:** Mandatory variable initialization; no implicit uninitialized memory reads.
-- **Fixed-Width Primitives:** Strict, platform-independent sizing (`int8`–`int512`, `uint8`–`uint512`, `float16`–`float128`, `uint64` indexing). No ambiguous types like `int` or `size_t`.
-- **Zero-Cost Abstractions:** Monomorphized compile-time generics with zero runtime metadata overhead.
-- **Explicit Type Conversions:** Clear taxonomy distinguishing safe conversions (`Type(x)`), lossy/narrowing conversions (`Type!(x)`), and bit reinterpretation (`@bitcast(Type, x)`).
-- **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with first-class syntactic support (`??`) and no runtime exception overhead.
-- **C Interoperability:** First-class `extern "C"` support adhering strictly to the System V AMD64 ABI.
+- **Fixed-Width Primitives:** Strict, platform-independent sizing (`int8`–`int512`, `uint8`–`uint512`, `float16`–`float128`, `uint64` indexing).
+- **Zero-Cost Generics:** Monomorphized compile-time generics with zero runtime metadata overhead.
+- **Explicit Type Conversions:** Clear taxonomy distinguishing safe widening conversions, explicit casts (`@cast`), and bit reinterpretation (`@bitcast`).
+- **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with first-class syntactic support (`??`) and zero exception overhead.
+- **System V AMD64 ABI Compliance:** Native register allocation across integer registers (`RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`), SSE registers (`XMM0`–`XMM7`), 128-bit register pairs (`RAX:RDX`), and dynamic 16-byte stack frame alignment.
+- **Self-Contained Assembly Runtime:** Direct Linux syscall bindings (`sys_mmap`, `sys_munmap`, `sys_write`, `sys_exit`) providing microscopic standalone executable support.
 
 ---
 
@@ -49,25 +53,24 @@ This repository contains the language specification and the reference compiler i
 
 | Category | Types | Details |
 |---|---|---|
-| **Signed Integers** | `int8`, `int16`, `int32`, `int64`, `int128`, `int256`, `int512` | Two's-complement. $\ge 256$-bit lowered via compiler runtime helpers. |
-| **Unsigned Integers** | `uint8`, `uint16`, `uint32`, `uint64`, `uint128`, `uint256`, `uint512` | Binary unsigned. |
-| **Floating-Point** | `float16`, `float32`, `float64`, `float128` | IEEE 754-2008 standard formats. |
-| **Boolean** | `bool8`, `bool16`, `bool32`, `bool64`, `bool128`, `bool256`, `bool512` | `0` is `false`; any non-zero value is `true`. Relational ops yield canonical `1`. |
-| **Code Units** | `char8`, `char16`, `char32` | UTF-8, UTF-16, and UTF-32 code units. |
-| **Strings** | `string8`, `string16`, `string32` | Value fat-pointer: `{ const charN* data; uint64 length; }`. Immutable. |
-| **Unit / Void** | `void` | Return-type marker only; cannot be instantiated as a variable. |
+| **Signed Integers** | `int8`, `int16`, `int32`, `int64`, `int128`, `int256`, `int512` | Two's-complement arithmetic. Native 128-bit multi-register operations (`ADC`/`SBB`). |
+| **Unsigned Integers** | `uint8`, `uint16`, `uint32`, `uint64`, `uint128`, `uint256`, `uint512` | Binary unsigned representation. |
+| **Floating-Point** | `float16`, `float32`, `float64`, `float128` | IEEE 754 standard formats passed via SSE vector registers (`XMM0`–`XMM7`). |
+| **Boolean** | `bool8`, `bool16`, `bool32`, `bool64`, `bool128`, `bool256`, `bool512` | `0` is `false`; non-zero is `true`. Logical ops yield canonical `1`. |
+| **Code Units** | `char8`, `char16`, `char32` | UTF-8, UTF-16, and UTF-32 sized code unit primitives. |
+| **Strings** | `string8`, `string16`, `string32` | Fat-pointer string references: `{ const charN* data, uint64 length }`. |
+| **Unit / Void** | `void` | Return-type marker only. |
 
-*All indexing, lengths, and capacities use `uint64`.*
+*All indexing, lengths, and capacities strictly use `uint64`.*
 
 ---
 
 ### 2. Literals and Constants
 
-- **Integers**: `42`, `0xFF`, `0b1010`, `0o755`. Underscore separators are supported (`1_000_000`).
-- **Floats**: `3.14`, `1.0e-9`.
-- **Literal Typing**: Literals are untyped compile-time constants of arbitrary precision. They infer their type based on destination context; values exceeding target bounds cause a compilation error.
+- **Integers**: Decimal (`42`), Hexadecimal (`0xFF`), Binary (`0b1010`), Octal (`0o755`), with optional underscore separators (`1_000_000`).
+- **Floats**: `3.14159`, `1.0e-9`, `2.5E+3`.
 - **Characters & Strings**: `'a'`, `'\u{1F600}'`, `"standard string\n"`, and raw strings `` `C:\raw\path` ``.
-- **Pointers**: `null` (assignable only to raw pointers `T*`).
+- **Pointers**: `null` (assignable only to raw pointers `T*` or comparable with pointer types).
 
 ---
 
@@ -77,17 +80,15 @@ Every variable must be explicitly initialized upon declaration:
 
 ```c++
 int32 x = 5;
-const int32 y = compute_value(); // Runtime immutable
+const int32 y = 100;             // Immutable binding (compile-time checked)
 
-Point p = {};                    // Initialized using default struct field values
-int32[4] arr = [1, 2, 3, 4];     // Full element array initialization
-int32[8] zeroed = [0...];        // Fill all 8 elements with 0
-int32[] slice = arr[0..2];       // Slice reference
-int32[] empty_slice = {};        // { data = null, length = 0 }
+Point p = { .x = 10, .y = 20 };  // Designated struct field initialization
+int32[4] arr = [1, 2, 3, 4];     // Fixed-size stack array
+int32[] slice = arr[0..3];       // Slice view over subrange [0, 3)
 
 // Compile-time constants
-MAX_RETRIES :: uint32(5);
-PI          :: float64(3.141592653589793);
+BUFFER_SIZE :: 1024;
+PI          :: 3.141592653589793;
 ```
 
 ---
@@ -95,18 +96,13 @@ PI          :: float64(3.141592653589793);
 ### 4. Functions
 
 - **Syntax:** `name :: (params) -> ReturnType { body }`
-- Parameters are immutable bindings by default.
-- Function overloading is resolved statically via arity and parameter types. Default arguments are supported.
+- **Default Arguments:** Supported on parameters.
+- **Linkage:** Default private to module; `#export` marks symbols global.
 
 ```c++
-add :: (int32 a, int32 b) -> int32
-{
-  return a + b;
-}
-
-connect :: (string8 host, uint16 port = 80) -> !int32
-{
-  return success(1);
+#export
+add :: (int32 a, int32 b = 10) -> int32 {
+    return a + b;
 }
 ```
 
@@ -114,22 +110,20 @@ connect :: (string8 host, uint16 port = 80) -> !int32
 
 ### 5. Generics
 
-Generic functions and types are fully monomorphized at compile time:
+Generic functions, structs, and unions are fully monomorphized at compile time with zero runtime metadata overhead:
 
 ```c++
-max :: <T>(T a, T b) -> T
-{
-  if (a > b) then { return a; }
-  else             { return b; }
+max :: <T>(T a, T b) -> T {
+    if (a > b) then { return a; }
+    else             { return b; }
 }
 
-Pair :: struct <K, V>
-{
-  K key;
-  V value;
+Pair :: struct <K, V> {
+    K key;
+    V value;
 }
 
-// Instantiation
+// Concrete instantiations (supports nested generic closing '>>')
 Pair<string8, int32> p = { .key = "answer", .value = 42 };
 int32 m = max<int32>(3, 7);
 ```
@@ -138,47 +132,42 @@ int32 m = max<int32>(3, 7);
 
 ### 6. Pointers, Arrays, and Slices
 
-- **Raw Pointer (`T*`)**: Address-of `&x`, dereference `*p`. Single-level auto-dereferencing applies for member access (`p.field` desugars to `(*p).field`). Direct pointer arithmetic on `T*` is prohibited.
-- **Fixed-Size Array (`T[N]`)**: Value type stored inline/on stack with fixed compile-time size `N`.
-- **Slice (`T[]`)**: Value fat-pointer representation `{ T* data; uint64 length; }`. Sub-slices use `arr[start..end]` syntax with runtime bounds checking.
-- **Dynamic Array**: Heap-allocated vector available via `std::collection::array<T>`.
+- **Raw Pointer (`T*`)**: Address-of `&x`, dereference `*p`. Single-level auto-dereferencing applies for member access (`p.field` desugars to `(*p).field`).
+- **Fixed-Size Array (`T[N]`)**: Contiguous value type allocated inline or on stack with fixed compile-time size `N`.
+- **Slice (`T[]`)**: 16-byte value fat-pointer `{ T* data, uint64 length }`.
+- **Bounds Checking**: Sub-slicing `arr[start..end]` and element indexing `slice[i]` perform runtime safety bounds validation, calling panic handlers if violated.
 
 ---
 
 ### 7. Structs, Enums, and Unions
 
 ```c++
-Point :: struct
-{
-  float32 x = 0.0;   // Default field values required
-  float32 y = 0.0;
+Point :: struct {
+    int32 x = 0;
+    int32 y = 0;
 }
 
-Color :: enum -> uint8   // Backing integer type is mandatory
-{
-  red   = 1,
-  green = 2,
-  blue  = 3,
+Color :: enum -> uint8 {
+    red   = 1,
+    green = 2,
+    blue  = 3
 }
 
-Value :: union          // Untagged low-level union
-{
-  int64   i;
-  float32 f;
+DataUnion :: union {
+    int32   bits;
+    float32 val;
 }
 ```
-
-- Enum-to-integer and integer-to-enum conversions are strongly typed and require explicit casts (`uint8(Color::red)`).
 
 ---
 
 ### 8. Operators and Casting
 
-- **Statements vs Expressions:** Assignment (`=`), compound assignments (`+=`, `-=`), and increments/decrements (`++`, `--`) are statements.
-- **Cast Taxonomy:**
-  - `Type(expr)`: Lossless, widening conversion.
-  - `Type!(expr)`: Lossy or truncating conversion.
-  - `@bitcast(Type, expr)`: Reinterprets bit pattern of equal-sized types.
+- **Assignment & Compound Ops:** `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `++`, `--` are statements.
+- **Arithmetic & Bitwise:** `+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `~`, `<<`, `>>`.
+- **Logical:** `&&`, `||`, `!` (short-circuiting).
+- **Explicit Casting:** `@cast(TargetType, expr)` performs checked widening/narrowing or float/int conversions.
+- **Bitcasting:** `@bitcast(TargetType, expr)` reinterprets bit patterns of equal-sized types.
 
 ---
 
@@ -186,43 +175,40 @@ Value :: union          // Untagged low-level union
 
 #### Conditionals & Loops
 ```c++
-// if/then/else requires `then`
+// if/then/else requires 'then'
 if (x > 0) then {
-  std::io::print("positive\n");
+    std::io::println("positive");
 } else {
-  std::io::print("non-positive\n");
+    std::io::println("non-positive");
 }
 
-// Loops
+// While & Do-While
 while (condition) { /* ... */ }
 do { /* ... */ } while (condition);
 
-// Multi-level break/continue
-break(2);     // Break out of 2 nested loops/switches
-continue;     // Continue innermost loop
-```
-
-#### Pattern Matching & Iteration
-```c++
-// switch (statement)
-switch (c)
-{
-  case Color::red   { std::io::print("red\n");   }
-  case Color::green { std::io::print("green\n"); }
-  default           { std::io::print("other\n"); }
+// 3-Clause For Loop
+for (int32 i = 0; i < 10; i++) {
+    if (i == 2) then { continue; }
+    if (i == 8) then { break; }
 }
 
-// match (exhaustive expression with '#' binding)
-string8 name = match (c)
-{
-  # == Color::red                              { "red"   }
-  # == Color::green || # == Color::light_green { "green" }
-  default                                      { "other" }
+// Multi-Level Break / Continue
+break(2);     // Break out of 2 enclosing loops/switches
+continue(2);  // Continue parent loop
+```
+
+#### Pattern Matching & Foreach
+```c++
+// Pattern match expression with '#' subject binding
+int32 mapped = match (code) {
+    # == 1 || # == 2 { 100 }
+    # >= 10          { 500 }
+    default          { 0 }
 };
 
-// foreach loop
-foreach (uint64 i, string8 arg in args) {
-  std::io::print("{}: {}\n", i, arg);
+// Foreach iteration over Arrays and Slices
+foreach (uint64 idx, int32 val in slice) {
+    std::io::print_int(val);
 }
 ```
 
@@ -232,26 +218,31 @@ foreach (uint64 i, string8 arg in args) {
 
 Femto enforces deterministic error handling without runtime exceptions:
 
-- `!T` is an opaque discriminated union `{ int32 code; T value; }`.
-- `!void` represents operations that return only an error code `{ int32 code; }`.
+- `!T` represents a result returning either a success payload `T` or an `int32` error code.
+- `!void` represents operations returning only an error code status.
 - Return values are constructed using `success(val)` / `success()` and `failure(code)` / `failure()`.
 
 ```c++
-read_config_file :: (string8 filename) -> !string8
-{
-  // The postfix '??' operator unwraps the value or immediately returns failure
-  string8 data = std::io::read(filename)??;
-  return success(data);
+safe_divide :: (int32 a, int32 b) -> !int32 {
+    if (b == 0) then {
+        return failure(101); // Error code
+    }
+    return success(a / b);
 }
 
-main :: (string8[] args) -> int32
-{
-  // Result branching construct
-  read_config_file("app.cfg")
-    ?? (string8 cfg)      { std::io::print("Loaded: {}\n", cfg); }
-    :  (int32 error_code) { std::io::print("Error: {}\n", error_code); return 1; };
+calculate :: (int32 a, int32 b) -> !int32 {
+    // '??' unwraps payload or immediately returns failure upward
+    int32 result = safe_divide(a, b)??;
+    return success(result * 2);
+}
 
-  return 0;
+main :: () -> int32 {
+    // Result branching construct
+    calculate(100, 5)
+        ?? (int32 val)  { std::io::print_int(val); }
+        :  (int32 code) { std::io::println("Division error"); return 1; };
+
+    return 0;
 }
 ```
 
@@ -259,19 +250,25 @@ main :: (string8[] args) -> int32
 
 ### 11. Modules, Visibility, and C Interop
 
-- Modules are mapped one-to-one per source file.
-- Declarations are private to the module by default; public symbols are marked with `#export`.
-- Namespaces and imports:
+- Modules are mapped to `.femto` source files:
   ```c++
   import std::io;
+  import std::math;
   import std::collection as col;
+  ```
+- Namespaces:
+  ```c++
+  namespace Geometry::Circle {
+      #export
+      area :: (float64 r) -> float64 { return 3.14159 * r * r; }
+  }
   ```
 - C ABI linkage:
   ```c++
-  extern "C"
-  {
-    read  :: (int32 fd, uint8* buf, uint64 count) -> int64;
-    write :: (int32 fd, const uint8* buf, uint64 count) -> int64;
+  extern "C" {
+      puts   :: (string8 str) -> int32;
+      malloc :: (uint64 size) -> int64;
+      free   :: (int64 ptr) -> void;
   }
   ```
 
@@ -279,94 +276,181 @@ main :: (string8[] args) -> int32
 
 ### 12. Compile-Time Metaprogramming
 
-- Conditional compilation: `#if (cond) { ... } #else { ... }`
-- Built-in reflection intrinsics:
-  - `@target`, `@arch`, `@endian`
-  - `@file`, `@line`
-  - `@sizeof(T)`, `@alignof(T)`, `@typeof(expr)`
+- Static conditionals: `#if (cond) { ... } #else { ... }`
+- Built-in reflection & size intrinsics:
+  - `@sizeof(T)`
+  - `@alignof(T)`
+  - `@cast(TargetType, expr)`
   - `@bitcast(TargetType, expr)`
 
 ---
 
 ## ABI and Memory Layout
 
-Femto conforms to the System V AMD64 ABI on x86-64 Linux:
+Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
 
-| Femto Type | In-Memory Layout | ABI Register Passing |
+| Femto Type | In-Memory Layout | ABI Passing Register(s) |
 |---|---|---|
-| `int8`..`int64`, `uint8`..`uint64`, `bool8`..`bool64`, `charN` | 1, 2, 4, 8 bytes sign/zero extended | `INTEGER` class (`RAX`, `RDI`, etc.) |
-| `int128`, `uint128`, `bool128` | 16 bytes (low 64-bit, high 64-bit) | `INTEGER` pair (`RDI:RSI` or `RAX:RDX`) |
-| `int256`, `int512`, `uint256`, `uint512` | 32 / 64 bytes inline buffer | Passed by hidden reference or stack |
-| `float16`, `float32`, `float64` | Standard IEEE 754 representations | `SSE` class (`XMM0`–`XMM7`) |
-| `float128` | 16 bytes IEEE 754 `binary128` | `X87` / `SSE` pair |
-| Raw Pointer `T*` | 8 bytes address | `INTEGER` |
-| Slice `T[]` / `stringN` | `{ T* data, uint64 length }` (16 bytes) | Passed in two `INTEGER` registers |
-| Result `!T` | `{ int32 code, [pad], T value }` | In registers if $\le 16$ bytes, else via hidden pointer |
-| Result `!void` | `{ int32 code }` (4 bytes) | Single `INTEGER` register |
+| `int8`..`int64`, `uint8`..`uint64`, `boolN`, `charN`, `T*` | 1, 2, 4, 8 bytes | `INTEGER` registers (`RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`) |
+| `int128`, `uint128` | 16 bytes (low 64-bit, high 64-bit) | `INTEGER` register pair (`RDI:RSI` or `RAX:RDX`) |
+| `float32`, `float64` | IEEE 754 (4 or 8 bytes) | `SSE` vector registers (`XMM0`–`XMM7`) |
+| Slice `T[]` / `stringN` | `{ T* data, uint64 length }` (16 bytes) | Passed across two `INTEGER` registers |
+| Result `!T` | `{ int32 code, [pad], T value }` (16 bytes) | Register pair (`RAX:RDX`) |
+| Struct / Union | Field offset & padding aligned | Value copy / pointer reference |
 
 ---
 
 ## Compiler Architecture
 
-The reference compiler is implemented as a pipeline written in ISO C++26:
+```
+                      Source Code (.femto)
+                               │
+                               ▼
+                       [ Arena Allocator ]
+                               │
+                               ▼
+                           [ Lexer ] ──► Token Stream
+                               │
+                               ▼
+                          [ Parser ] ──► Abstract Syntax Tree (AST)
+                               │
+                               ▼
+                     [ Type Checker & Sema ]
+                      ├── Monomorphization
+                      ├── Memory Layout Calculation
+                      └── Compile-Time Const Eval
+                               │
+                               ▼
+                      [ NASM Code Generator ]
+                      ├── Dynamic Stack Frame Calculation
+                      ├── 16-Byte System V ABI Alignment
+                      └── Sized Instruction Lowering
+                               │
+                               ▼
+                      Assembly File (.asm)
+                               │
+                               ▼
+                   [ nasm -f elf64 + gcc ] ──► Native ELF-64 Executable
+```
+
+---
+
+## Project Layout
 
 ```
-Source Code (.femt)
-       │
-       ▼
-   [ Lexer ]  ────────► Token Stream
-       │
-       ▼
-   [ Parser ] ────────► Abstract Syntax Tree (AST)
-       │
-       ▼
-[ Semantic Analyzer ] ─► Symbol Resolution, Monomorphization, Type Checking
-       │
-       ▼
-  [ HIR Lowering ] ───► High-Level IR (Desugars match, foreach, ??, !T)
-       │
-       ▼
-  [ LIR Lowering ] ───► Low-Level IR (SSA Form, Control Flow Graph)
-       │
-       ▼
- [ RegAlloc & Opt ] ──► Register Allocation (Linear Scan / Graph Coloring)
-       │
-       ▼
-[ CodeGen: NASM ] ───► x86-64 Intel Syntax Assembly (.asm)
-       │
-       ▼
-  [ nasm + ld ]  ─────► Native ELF-64 Executable
+femto/
+├── CMakeLists.txt              # CMake build configuration & check target
+├── test_runner.py              # Automated 3-tier test runner
+├── runtime/
+│   └── femto_rt.asm            # Assembly runtime (allocator, formatting, panic)
+├── src/
+│   ├── main.cpp                # Compiler CLI entry point & module loader
+│   ├── common/
+│   │   ├── arena.hpp           # Memory arena buffer resource
+│   │   ├── diagnostic.hpp      # ANSI source diagnostics reporting
+│   │   └── source_manager.hpp  # Line/column tracking & binary search
+│   ├── frontend/
+│   │   ├── token.hpp           # Token taxonomy
+│   │   ├── lexer.hpp / .cpp    # Tokenizer
+│   │   ├── ast.hpp             # AST node structures
+│   │   └── parser.hpp / .cpp   # Pratt precedence parser & AST builder
+│   ├── sema/
+│   │   └── type_checker.hpp / .cpp # Type verification & monomorphizer
+│   └── codegen/
+│       └── nasm_emitter.hpp / .cpp # x86-64 Intel NASM code generator
+├── stdlib/
+│   └── std/
+│       ├── builtin.femto       # Builtin runtime bindings
+│       ├── c.femto             # Libc C-FFI wrappers
+│       ├── collection.femto    # Dynamic Array<T>
+│       ├── fs.femto            # File stream I/O
+│       ├── io.femto            # Console formatting & printing
+│       ├── math.femto          # Mathematical functions & constants
+│       ├── mem.femto           # Low-level memory utilities
+│       ├── string.femto        # Dynamic growable String builder
+│       └── sys.femto           # Process exit & panic utilities
+└── tests/
+    ├── unit/                   # Tier 1: C++ component unit tests
+    │   ├── main.cpp            # Native unit test runner entry point
+    │   ├── test_framework.hpp  # Zero-dependency test assertion framework
+    │   ├── test_lexer.cpp      # Lexer component test cases
+    │   ├── test_parser.cpp     # Parser component test cases
+    │   ├── test_sema.cpp       # Semantic analyzer & layout tests
+    │   └── test_codegen.cpp    # Code generation & frame sizing tests
+    ├── negative/               # Tier 2: Negative compilation rejection tests
+    │   ├── neg_01_type_mismatch.femto
+    │   ├── neg_02_const_mutation.femto
+    │   ├── neg_03_break_depth.femto
+    │   ├── neg_04_missing_then.femto
+    │   └── neg_05_uninitialized.femto
+    └── test_*.femto            # Tier 3: End-to-end integration tests
 ```
 
 ---
 
 ## Prerequisites and Toolchain
 
-To build the compiler and execute compiled programs, the following tools are required:
+- **C++ Compiler:** GCC ($\ge 12$) or Clang ($\ge 16$) supporting ISO C++20.
+- **Assembler:** [NASM](https://www.nasm.us/) ($\ge 2.15$).
+- **Build System:** CMake ($\ge 3.20$) and Make/Ninja.
+- **Linker / C Runtime:** GNU `ld` / `gcc` driver with standard `libc` and `libm`.
+- **Python:** Python 3.8+ (for automated test orchestration).
 
-- **C++ Compiler:** Modern C++ compiler supporting ISO C++26 (GCC 14+ or Clang 18+)
-- **Assembler:** [NASM](https://www.nasm.us/) ($\ge 2.15$)
-- **Linker / C Runtime:** GNU Linker (`ld`) and standard `libc` (`gcc` driver recommended)
+---
+
+## Building the Compiler
+
+1. **Configure and build using CMake:**
+   ```bash
+   mkdir build && cd build
+   cmake ..
+   cmake --build .
+   ```
+
+2. **Binaries generated in `build/`:**
+   - `femtoc`: The Femto reference compiler executable.
+   - `femto_unit_tests`: The native C++ component test runner.
+   - `femto_rt.o`: The assembled native runtime object.
+
+---
+
+## Automated Test Suite
+
+Femto features a unified 3-tier test suite:
+
+1. **Tier 1 (Internal Unit Tests):** Verifies internal compiler components (`Lexer`, `Parser`, `Sema`, `TypeChecker`, `Monomorphizer`, `NasmEmitter`) in isolation.
+2. **Tier 2 (Negative Diagnostic Tests):** Verifies that semantic and syntactic errors (e.g. type mismatches, mutating `const` variables, invalid `break` levels) are rejected with accurate diagnostics.
+3. **Tier 3 (End-to-End Tests):** Compiles and executes comprehensive `.femto` test suites verifying integer math, floats, control flow, pattern matching, structs, unions, pointers, slices, results, generics, metaprogramming, and stdlib modules.
+
+### Running All Tests
+
+From the repository root:
+```bash
+python test_runner.py
+```
+Or directly using CMake/Ninja from your build directory:
+```bash
+cmake --build build --target check
+```
 
 ---
 
 ## Quick Start Example
 
-1. **Write a program (`hello.femt`):**
+1. **Write a program (`hello.femto`):**
    ```c++
    import std::io;
 
    #export
-   main :: (string8[] args) -> int32
-   {
-     std::io::print("Hello, Femto!\n");
-     return 0;
+   main :: () -> int32 {
+       std::io::println("Hello, Femto!");
+       return 0;
    }
    ```
 
-2. **Compile to native binary:**
+2. **Compile to a native binary:**
    ```bash
-   femtoc hello.femt -o hello
+   build/femtoc hello.femto -o hello
    ./hello
    ```
 
