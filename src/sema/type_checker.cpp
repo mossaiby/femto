@@ -12,16 +12,20 @@ std::string TypeChecker::get_type_name(const ASTType* ty) {
             case TokenKind::KwInt16: return "int16";
             case TokenKind::KwInt32: return "int32";
             case TokenKind::KwInt64: return "int64";
+            case TokenKind::KwInt128: return "int128";
             case TokenKind::KwUint8: return "uint8";
             case TokenKind::KwUint16: return "uint16";
             case TokenKind::KwUint32: return "uint32";
             case TokenKind::KwUint64: return "uint64";
+            case TokenKind::KwUint128: return "uint128";
             case TokenKind::KwFloat16: return "float16";
             case TokenKind::KwFloat32: return "float32";
             case TokenKind::KwFloat64: return "float64";
             case TokenKind::KwFloat128: return "float128";
             case TokenKind::KwBool8: return "bool8";
             case TokenKind::KwChar8: return "char8";
+            case TokenKind::KwChar16: return "char16";
+            case TokenKind::KwChar32: return "char32";
             case TokenKind::KwString8: return "string8";
             case TokenKind::KwString16: return "string16";
             case TokenKind::KwString32: return "string32";
@@ -58,16 +62,20 @@ void TypeChecker::init_primitives() {
     type_env_["int16"]    = make_prim(TokenKind::KwInt16, 2);
     type_env_["int32"]    = make_prim(TokenKind::KwInt32, 4);
     type_env_["int64"]    = make_prim(TokenKind::KwInt64, 8);
+    type_env_["int128"]   = make_prim(TokenKind::KwInt128, 16);
     type_env_["uint8"]    = make_prim(TokenKind::KwUint8, 1);
     type_env_["uint16"]   = make_prim(TokenKind::KwUint16, 2);
     type_env_["uint32"]   = make_prim(TokenKind::KwUint32, 4);
     type_env_["uint64"]   = make_prim(TokenKind::KwUint64, 8);
+    type_env_["uint128"]  = make_prim(TokenKind::KwUint128, 16);
     type_env_["float16"]  = make_prim(TokenKind::KwFloat16, 2);
     type_env_["float32"]  = make_prim(TokenKind::KwFloat32, 4);
     type_env_["float64"]  = make_prim(TokenKind::KwFloat64, 8);
     type_env_["float128"] = make_prim(TokenKind::KwFloat128, 16);
     type_env_["bool8"]    = make_prim(TokenKind::KwBool8, 1);
     type_env_["char8"]    = make_prim(TokenKind::KwChar8, 1);
+    type_env_["char16"]   = make_prim(TokenKind::KwChar16, 2);
+    type_env_["char32"]   = make_prim(TokenKind::KwChar32, 4);
     type_env_["string8"]  = make_prim(TokenKind::KwString8, 8);
     type_env_["string16"] = make_prim(TokenKind::KwString16, 8);
     type_env_["string32"] = make_prim(TokenKind::KwString32, 8);
@@ -314,6 +322,7 @@ static int64_t parse_literal_int(std::string_view raw) {
     }
     if (s == "true") return 1;
     if (s == "false") return 0;
+    if (s == "null") return 0;
     if (s.size() >= 3 && s.front() == '\'' && s.back() == '\'') {
         return (unsigned char)s[1];
     }
@@ -409,6 +418,15 @@ SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
 bool TypeChecker::check_type_compatibility(SemaType* expected, SemaType* actual, SourceSpan span) {
     if (!expected || !actual) return true;
     if (expected == actual) return true;
+    
+    if (expected->kind == SemaType::Kind::Pointer && actual->kind == SemaType::Kind::Pointer) {
+        auto exp_p = std::get<PointerTypeInfo>(expected->data).pointee;
+        auto act_p = std::get<PointerTypeInfo>(actual->data).pointee;
+        if ((exp_p && exp_p == type_env_["void"]) || (act_p && act_p == type_env_["void"])) {
+            return true;
+        }
+    }
+
     diag_.report_error(span, "type mismatch: cannot implicitly convert between distinct types");
     return false;
 }
@@ -418,26 +436,27 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgr
     switch (stmt->kind) {
         case StmtKind::VarDecl: {
             auto* declared_t = resolve_ast_type(stmt->type_annot);
-            symbol_table_[std::string(stmt->name)] = declared_t;
+            symbol_table_[std::string(stmt->name)] = SymbolInfo{ declared_t, stmt->is_const };
             if (stmt->init_expr) {
                 check_expression(stmt->init_expr, prog);
             }
             break;
         }
         case StmtKind::Assignment:
-        case StmtKind::CompoundAssignment: {
+        case StmtKind::CompoundAssignment:
+        case StmtKind::Increment:
+        case StmtKind::Decrement: {
             if (stmt->target_expr) {
+                if (stmt->target_expr->kind == ExprKind::Identifier) {
+                    auto it = symbol_table_.find(std::string(stmt->target_expr->raw_text));
+                    if (it != symbol_table_.end() && it->second.is_const) {
+                        diag_.report_error(stmt->span, "cannot mutate immutable const variable '" + std::string(stmt->target_expr->raw_text) + "'");
+                    }
+                }
                 check_expression(stmt->target_expr, prog);
             }
             if (stmt->value_expr) {
                 check_expression(stmt->value_expr, prog);
-            }
-            break;
-        }
-        case StmtKind::Increment:
-        case StmtKind::Decrement: {
-            if (stmt->target_expr) {
-                check_expression(stmt->target_expr, prog);
             }
             break;
         }
@@ -487,9 +506,9 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgr
             current_loop_depth_++;
             check_expression(stmt->iter_collection, prog);
             auto* item_t = resolve_ast_type(stmt->iter_type);
-            symbol_table_[std::string(stmt->iter_var)] = item_t;
+            symbol_table_[std::string(stmt->iter_var)] = SymbolInfo{ item_t, false };
             if (!stmt->iter_idx.empty()) {
-                symbol_table_[std::string(stmt->iter_idx)] = type_env_["int32"];
+                symbol_table_[std::string(stmt->iter_idx)] = SymbolInfo{ type_env_["int32"], false };
             }
             for (auto* s : stmt->then_block) check_statement(s, return_type, prog);
             current_loop_depth_--;
@@ -497,9 +516,9 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgr
         }
         case StmtKind::ResultBranch: {
             check_expression(stmt->condition, prog);
-            symbol_table_[std::string(stmt->success_var)] = type_env_["int32"];
+            symbol_table_[std::string(stmt->success_var)] = SymbolInfo{ type_env_["int32"], false };
             for (auto* s : stmt->success_block) check_statement(s, return_type, prog);
-            symbol_table_[std::string(stmt->failure_var)] = type_env_["int32"];
+            symbol_table_[std::string(stmt->failure_var)] = SymbolInfo{ type_env_["int32"], false };
             for (auto* s : stmt->failure_block) check_statement(s, return_type, prog);
             break;
         }
@@ -534,6 +553,9 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
 
     switch (expr->kind) {
         case ExprKind::Literal: {
+            if (expr->raw_text == "null") {
+                return new SemaType{SemaType::Kind::Pointer, 8, 8, PointerTypeInfo{type_env_["void"]}};
+            }
             if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`') {
                 return type_env_["string8"];
             }
@@ -574,8 +596,12 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
             if (c_it != const_defs_.end()) {
                 return type_env_["int32"];
             }
+            auto fc_it = float_const_defs_.find(std::string(expr->raw_text));
+            if (fc_it != float_const_defs_.end()) {
+                return type_env_["float64"];
+            }
             auto it = symbol_table_.find(std::string(expr->raw_text));
-            if (it != symbol_table_.end()) return it->second;
+            if (it != symbol_table_.end()) return it->second.type;
             return type_env_["int32"];
         }
         case ExprKind::Unary: {
@@ -697,6 +723,13 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
                 diag_.report_error(expr->span, "invalid binary operator for floating-point operands");
                 return type_env_["float64"];
             }
+            if ((lt && lt->is_128bit()) || (rt && rt->is_128bit())) {
+                if (expr->op == "==" || expr->op == "!=" || expr->op == "<" ||
+                    expr->op == "<=" || expr->op == ">" || expr->op == ">=") {
+                    return type_env_["int32"];
+                }
+                return type_env_["int128"];
+            }
             return type_env_["int32"];
         }
         case ExprKind::Call: {
@@ -708,7 +741,7 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
             if (expr->left && expr->left->kind == ExprKind::Identifier) {
                 std::string callee = std::string(expr->left->raw_text);
                 for (const auto* fn : prog.functions) {
-                    if (fn->name == callee) {
+                    if (fn->name == callee || fn->name.ends_with("::" + callee)) {
                         return resolve_ast_type(fn->return_type);
                     }
                 }
@@ -723,19 +756,29 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
 bool TypeChecker::check_program(ASTProgram& prog) {
     init_primitives();
 
-    // 1. Constants
     for (auto* c : prog.constants) {
-        const_defs_[std::string(c->name)] = eval_const_expr(c->init_expr);
+        if (c->init_expr) {
+            auto* c_ty = check_expression(c->init_expr, prog);
+            if (c_ty && c_ty->is_floating_point()) {
+                double fval = 0.0;
+                if (c->init_expr->kind == ExprKind::Literal) {
+                    std::string clean;
+                    for (char ch : c->init_expr->raw_text) if (ch != '_') clean.push_back(ch);
+                    fval = std::stod(clean);
+                }
+                float_const_defs_[std::string(c->name)] = fval;
+            } else {
+                const_defs_[std::string(c->name)] = eval_const_expr(c->init_expr);
+            }
+        }
     }
 
-    // 2. Enums
     for (auto* e : prog.enums) {
         for (auto& v : e->variants) {
             enum_defs_[std::string(e->name)][std::string(v.name)] = v.value.value_or(0);
         }
     }
 
-    // 3. Collect Structs (Generic vs Concrete)
     for (auto* st : prog.structs) {
         if (!st->generic_params.empty()) {
             generic_structs_[std::string(st->name)] = st;
@@ -744,7 +787,6 @@ bool TypeChecker::check_program(ASTProgram& prog) {
         }
     }
 
-    // 4. Collect Unions (Generic vs Concrete)
     for (auto* un : prog.unions) {
         if (!un->generic_params.empty()) {
             generic_unions_[std::string(un->name)] = un;
@@ -753,14 +795,12 @@ bool TypeChecker::check_program(ASTProgram& prog) {
         }
     }
 
-    // 5. Collect Generic Functions
     for (auto* fn : prog.functions) {
         if (!fn->generic_params.empty()) {
             generic_functions_[std::string(fn->name)] = fn;
         }
     }
 
-    // 6. Typecheck Functions
     size_t i = 0;
     while (i < prog.functions.size()) {
         auto* fn = prog.functions[i];
@@ -768,7 +808,7 @@ bool TypeChecker::check_program(ASTProgram& prog) {
             symbol_table_.clear();
             current_loop_depth_ = 0;
             for (auto& p : fn->params) {
-                symbol_table_[std::string(p.name)] = resolve_ast_type(p.type);
+                symbol_table_[std::string(p.name)] = SymbolInfo{ resolve_ast_type(p.type), false };
             }
             auto* ret_type = resolve_ast_type(fn->return_type);
             for (auto* stmt : fn->body) {

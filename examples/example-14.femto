@@ -1,0 +1,67 @@
+import std::io;
+
+#export
+add_128 :: (int128 a, int128 b) -> int128 {
+    return a + b;
+}
+
+#export
+main :: () -> int32 {
+    // 1. Sized Unicode character primitives (char16, char32)
+    char16 c16 = 'A';
+    char32 c32 = 'B';
+
+    int32 c16_val = @cast(int32, c16); // 65
+    int32 c32_val = @cast(int32, c32); // 66
+
+    std::io::print("1. char16 value: ");
+    std::io::println_int(c16_val);
+
+    std::io::print("   char32 value: ");
+    std::io::println_int(c32_val);
+
+    // 2. 128-bit integer casting and arithmetic
+    int128 a = @cast(int128, 1000000000);
+    int128 b = @cast(int128, 2000000000);
+    int128 c = a + b; // 3000000000
+
+    std::io::print("2. 128-bit a + b = ");
+    std::io::println_int128(c);
+
+    // 128-bit function call passing (rdi:rsi) and returning (rax:rdx)
+    int128 d = add_128(c, a); // 4000000000
+    std::io::print("   128-bit function add_128(c, a) = ");
+    std::io::println_int128(d);
+
+    // 3. 128-bit comparisons
+    int32 cmp_lt = 0;
+    if (a < b) then {
+        cmp_lt = 1;
+    }
+    std::io::print("3. 128-bit (a < b) check: ");
+    std::io::println_int(cmp_lt); // 1
+
+    int32 cmp_eq = 0;
+    if (c == @cast(int128, 3000000000)) then {
+        cmp_eq = 1;
+    }
+    std::io::print("   128-bit (c == 3000000000) check: ");
+    std::io::println_int(cmp_eq); // 1
+
+    // 4. @sizeof for extended types
+    int32 sz_i128 = @sizeof(int128);   // 16
+    int32 sz_u128 = @sizeof(uint128);  // 16
+    int32 sz_c16  = @sizeof(char16);   // 2
+    int32 sz_c32  = @sizeof(char32);   // 4
+
+    std::io::print("4. sizeof(int128): ");
+    std::io::println_int(sz_i128);
+
+    // Verification check
+    if (c16_val == 65 && c32_val == 66 && cmp_lt == 1 && cmp_eq == 1 && sz_i128 == 16 && sz_u128 == 16 && sz_c16 == 2 && sz_c32 == 4) then {
+        std::io::println("5. All Phase 5 extended 128-bit & Unicode tests passed!");
+        return 42;
+    } else {
+        return 1;
+    }
+}

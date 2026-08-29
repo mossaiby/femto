@@ -73,7 +73,6 @@ public:
             return false;
         }
 
-        // Recursively load imported modules
         for (const auto& imp : prog.imports) {
             std::string resolved_file = resolve_import_path(imp, canonical_path);
             if (resolved_file.empty()) {
@@ -93,21 +92,43 @@ public:
             }
         }
 
-        // Merge declarations and register qualified names
         for (auto* fn : prog.functions) {
-            master_prog.functions.push_back(fn);
             if (!mod_prefix.empty() && fn->name.find("::") == std::string_view::npos) {
-                std::string q_name = mod_prefix + "::" + std::string(fn->name);
+                if (fn->is_extern_c) {
+                    master_prog.functions.push_back(fn);
+                    std::string q_name = mod_prefix + "::" + std::string(fn->name);
+                    char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
+                    std::memcpy(q_buf, q_name.data(), q_name.size());
+                    q_buf[q_name.size()] = '\0';
+
+                    auto* alias_fn = arena_.allocate<femto::ASTFunctionDecl>(*fn);
+                    alias_fn->name = std::string_view(q_buf, q_name.size());
+                    master_prog.functions.push_back(alias_fn);
+                } else {
+                    std::string q_name = mod_prefix + "::" + std::string(fn->name);
+                    char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
+                    std::memcpy(q_buf, q_name.data(), q_name.size());
+                    q_buf[q_name.size()] = '\0';
+                    fn->name = std::string_view(q_buf, q_name.size());
+                    master_prog.functions.push_back(fn);
+                }
+            } else {
+                master_prog.functions.push_back(fn);
+            }
+        }
+        for (auto* st : prog.structs) {
+            master_prog.structs.push_back(st);
+            if (!mod_prefix.empty() && st->name.find("::") == std::string_view::npos) {
+                std::string q_name = mod_prefix + "::" + std::string(st->name);
                 char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
                 std::memcpy(q_buf, q_name.data(), q_name.size());
                 q_buf[q_name.size()] = '\0';
 
-                auto* alias_fn = arena_.allocate<femto::ASTFunctionDecl>(*fn);
-                alias_fn->name = std::string_view(q_buf, q_name.size());
-                master_prog.functions.push_back(alias_fn);
+                auto* alias_st = arena_.allocate<femto::ASTStructDecl>(*st);
+                alias_st->name = std::string_view(q_buf, q_name.size());
+                master_prog.structs.push_back(alias_st);
             }
         }
-        for (auto* st : prog.structs)   master_prog.structs.push_back(st);
         for (auto* un : prog.unions)    master_prog.unions.push_back(un);
         for (auto* en : prog.enums)     master_prog.enums.push_back(en);
         for (auto* cn : prog.constants) master_prog.constants.push_back(cn);
@@ -119,13 +140,11 @@ private:
     std::string resolve_import_path(const std::string& mod_name, const std::string& current_file) {
         std::string rel_file = mod_name + ".femto";
 
-        // 1. Check relative to importing file's directory
         fs::path cur_dir = fs::path(current_file).parent_path();
         if (fs::exists(cur_dir / rel_file)) {
             return (cur_dir / rel_file).string();
         }
 
-        // 2. Check search paths
         for (const auto& sp : search_paths_) {
             fs::path p = fs::path(sp) / rel_file;
             if (fs::exists(p)) {
@@ -145,10 +164,11 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: femtoc <source.femto> [options]\n"
                   << "Options:\n"
-                  << "  -o <file>          Specify output executable name (default: a.out)\n"
-                  << "  -I <dir>           Add search directory for imports\n"
-                  << "  --stdlib <dir>     Specify the path to the standard library\n"
-                  << "  --keep-temps, -k   Keep intermediate assembly (.asm) and object (.o) files\n";
+                  << "  -o <file>             Specify output executable name (default: a.out)\n"
+                  << "  -I <dir>              Add search directory for imports\n"
+                  << "  --stdlib <dir>        Specify the path to the standard library\n"
+                  << "  --no-bounds-check     Disable runtime array and slice bounds checks\n"
+                  << "  --keep-temps, -k      Keep intermediate assembly (.asm) and object (.o) files\n";
         return 1;
     }
 
@@ -156,6 +176,7 @@ int main(int argc, char** argv) {
     std::string output_path = "a.out";
     std::string stdlib_dir;
     bool keep_temps = false;
+    bool enable_bounds_checks = true;
     std::vector<std::string> search_paths = { "." };
 
     fs::path exe_dir = get_executable_dir(argv[0]);
@@ -170,6 +191,8 @@ int main(int argc, char** argv) {
             search_paths.push_back(arg.substr(2));
         } else if (arg == "--stdlib" && i + 1 < argc) {
             stdlib_dir = argv[++i];
+        } else if (arg == "--no-bounds-check") {
+            enable_bounds_checks = false;
         } else if (arg == "--keep-temps" || arg == "-k") {
             keep_temps = true;
         } else {
@@ -182,7 +205,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Resolve stdlib path strictly without heuristics
     if (stdlib_dir.empty()) {
         fs::path default_stdlib = exe_dir / "stdlib";
         if (fs::exists(default_stdlib)) {
@@ -219,7 +241,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    femto::NasmEmitter emitter(checker.type_env(), checker.enum_defs(), checker.const_defs());
+    femto::NasmEmitter emitter(checker.type_env(), checker.enum_defs(), checker.const_defs(), checker.float_const_defs(), enable_bounds_checks);
     std::string asm_code = emitter.generate_assembly(master_prog);
 
     std::string asm_path = output_path + ".asm";
@@ -270,7 +292,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Clean up intermediate files by default
     if (!keep_temps) {
         fs::remove(asm_path);
         fs::remove(obj_path);

@@ -23,6 +23,17 @@ println_int :: (int64 n) -> void {
 }
 
 #export
+print_int128 :: (int128 n) -> void {
+    __builtin_print_int128(n);
+}
+
+#export
+println_int128 :: (int128 n) -> void {
+    __builtin_print_int128(n);
+    __builtin_print_nl();
+}
+
+#export
 print_float :: (float64 val) -> void {
     __builtin_print_float(val);
 }

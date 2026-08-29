@@ -1,0 +1,48 @@
+import std::c;
+import std::builtin;
+
+#export
+open_read :: (string8 path) -> !int32 {
+    int32 fd = std::c::open(path, 0, 0); // O_RDONLY = 0
+    if (fd < 0) then {
+        return failure(103); // File open error
+    }
+    return success(fd);
+}
+
+#export
+open_write :: (string8 path) -> !int32 {
+    // O_WRONLY(1) | O_CREAT(64) | O_TRUNC(512) = 577, mode = 0644 (420)
+    int32 fd = std::c::open(path, 577, 420);
+    if (fd < 0) then {
+        return failure(104);
+    }
+    return success(fd);
+}
+
+#export
+open_append :: (string8 path) -> !int32 {
+    // O_WRONLY(1) | O_CREAT(64) | O_APPEND(1024) = 1089, mode = 0644 (420)
+    int32 fd = std::c::open(path, 1089, 420);
+    if (fd < 0) then {
+        return failure(105);
+    }
+    return success(fd);
+}
+
+#export
+write_str :: (int32 fd, string8 str) -> int64 {
+    uint64 len = std::c::strlen(str);
+    int64 str_ptr = @cast(int64, str);
+    return std::c::write(fd, str_ptr, len);
+}
+
+#export
+read_bytes :: (int32 fd, int64 buf, uint64 count) -> int64 {
+    return std::c::read(fd, buf, count);
+}
+
+#export
+close_file :: (int32 fd) -> int32 {
+    return std::c::close(fd);
+}

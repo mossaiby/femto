@@ -59,6 +59,22 @@ struct SemaType {
         auto pk = std::get<PrimitiveTypeInfo>(data).kind;
         return (pk == TokenKind::KwFloat16 || pk == TokenKind::KwFloat32 || pk == TokenKind::KwFloat64 || pk == TokenKind::KwFloat128);
     }
+
+    bool is_128bit() const {
+        if (kind != Kind::Primitive) return false;
+        auto pk = std::get<PrimitiveTypeInfo>(data).kind;
+        return (pk == TokenKind::KwInt128 || pk == TokenKind::KwUint128);
+    }
+
+    bool is_primitive(TokenKind k) const {
+        if (kind != Kind::Primitive) return false;
+        return std::get<PrimitiveTypeInfo>(data).kind == k;
+    }
+};
+
+struct SymbolInfo {
+    SemaType* type = nullptr;
+    bool is_const = false;
 };
 
 class TypeChecker {
@@ -73,6 +89,7 @@ public:
     const std::unordered_map<std::string, SemaType*>& type_env() const { return type_env_; }
     const std::unordered_map<std::string, std::unordered_map<std::string, int64_t>>& enum_defs() const { return enum_defs_; }
     const std::unordered_map<std::string, int64_t>& const_defs() const { return const_defs_; }
+    const std::unordered_map<std::string, double>& float_const_defs() const { return float_const_defs_; }
 
     static std::string get_type_name(const ASTType* ty);
 
@@ -82,7 +99,8 @@ private:
     std::unordered_map<std::string, SemaType*> type_env_;
     std::unordered_map<std::string, std::unordered_map<std::string, int64_t>> enum_defs_;
     std::unordered_map<std::string, int64_t> const_defs_;
-    std::unordered_map<std::string, SemaType*> symbol_table_;
+    std::unordered_map<std::string, double> float_const_defs_;
+    std::unordered_map<std::string, SymbolInfo> symbol_table_;
     std::unordered_map<std::string, ASTStructDecl*> generic_structs_;
     std::unordered_map<std::string, ASTUnionDecl*> generic_unions_;
     std::unordered_map<std::string, ASTFunctionDecl*> generic_functions_;
@@ -96,7 +114,6 @@ private:
 
     int64_t eval_const_expr(ASTExpr* expr);
 
-    // Monomorphization
     std::string monomorphize_struct(ASTType* generic_ty);
     std::string monomorphize_union(ASTType* generic_ty);
     std::string monomorphize_function(ASTExpr* call_expr, ASTProgram& prog);
