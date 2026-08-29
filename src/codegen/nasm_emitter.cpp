@@ -58,6 +58,20 @@ static std::string sanitize_nasm_identifier(std::string_view name) {
     return s;
 }
 
+bool NasmEmitter::is_string_expr(const ASTExpr* expr) {
+    if (!expr) return false;
+    if (expr->kind == ExprKind::Literal) {
+        return expr->raw_text.front() == '"' || expr->raw_text.front() == '`';
+    }
+    if (expr->kind == ExprKind::BuiltinFile || expr->kind == ExprKind::BuiltinTarget ||
+        expr->kind == ExprKind::BuiltinArch || expr->kind == ExprKind::BuiltinEndian ||
+        expr->kind == ExprKind::BuiltinTypeof) {
+        return true;
+    }
+    auto* ty = get_expr_type(expr);
+    return ty && (ty->is_primitive(TokenKind::KwString8) || ty->is_primitive(TokenKind::KwString16) || ty->is_primitive(TokenKind::KwString32));
+}
+
 uint64_t NasmEmitter::get_type_id(const ASTExpr* expr) {
     if (!expr) return 4;
     if (expr->kind == ExprKind::Literal) {
@@ -66,6 +80,7 @@ uint64_t NasmEmitter::get_type_id(const ASTExpr* expr) {
         if (expr->raw_text.front() == '\'') return 14; // TYPE_CHAR
         if (expr->raw_text == "null") return 18; // TYPE_POINTER
     }
+    if (is_string_expr(expr)) return 17; // TYPE_STRING
     if (is_float_expr(expr)) return 12; // TYPE_FLOAT64
     if (is_128bit_expr(expr)) return 5; // TYPE_INT128
     auto* ty = get_expr_type(expr);
@@ -162,6 +177,9 @@ uint32_t NasmEmitter::calculate_function_stack_size(const ASTFunctionDecl* fn) {
                 scan_expr(stmt->condition, off);
                 for (const auto* s : stmt->then_block) scan_stmt(s, off);
                 for (const auto* s : stmt->else_block) scan_stmt(s, off);
+                break;
+            case StmtKind::Defer:
+                for (const auto* s : stmt->then_block) scan_stmt(s, off);
                 break;
             case StmtKind::While:
             case StmtKind::DoWhile:
@@ -406,6 +424,9 @@ int64_t NasmEmitter::eval_const_expr(const ASTExpr* expr) {
     if (expr->kind == ExprKind::Literal) {
         return parse_literal_int_emitter(expr->raw_text);
     }
+    if (expr->kind == ExprKind::BuiltinLine) {
+        return expr->evaluated_line;
+    }
     if (expr->kind == ExprKind::Identifier) {
         auto it = const_defs_.find(std::string(expr->raw_text));
         if (it != const_defs_.end()) return it->second;
@@ -488,6 +509,10 @@ std::string NasmEmitter::generate_assembly(const ASTProgram& program) {
     data_sec_   << "section .data\n";
 
     std::unordered_set<std::string> extern_declared;
+    // Always declare strcmp for string comparisons
+    extern_declared.insert("strcmp");
+    text_sec_ << "extern strcmp\n";
+
     for (const auto* fn : program.functions) {
         if (fn->is_extern_c) {
             std::string ext_name = std::string(fn->name);
@@ -516,6 +541,8 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
     local_vars_.clear();
     loop_stack_.clear();
     subject_stack_.clear();
+    defer_scopes_.clear();
+    defer_scopes_.push_back({});
 
     std::string fn_lbl = sanitize_symbol_raw(fn->name);
     uint32_t frame_size = calculate_function_stack_size(fn);
@@ -577,9 +604,19 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
         emit_statement(stmt, stack_off);
     }
 
+    emit_deferred_statements(stack_off);
+
     text_sec_ << "    mov rsp, rbp\n";
     text_sec_ << "    pop rbp\n";
     text_sec_ << "    ret\n\n";
+}
+
+void NasmEmitter::emit_deferred_statements(uint32_t& stack_offset) {
+    for (auto scope_it = defer_scopes_.rbegin(); scope_it != defer_scopes_.rend(); ++scope_it) {
+        for (auto it = scope_it->rbegin(); it != scope_it->rend(); ++it) {
+            emit_statement(*it, stack_offset);
+        }
+    }
 }
 
 void NasmEmitter::emit_lvalue_address(const ASTExpr* lval) {
@@ -692,6 +729,14 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
     current_stack_offset_ = stack_offset;
 
     switch (stmt->kind) {
+        case StmtKind::Defer: {
+            for (auto* s : stmt->then_block) {
+                if (!defer_scopes_.empty()) {
+                    defer_scopes_.back().push_back(s);
+                }
+            }
+            break;
+        }
         case StmtKind::VarDecl: {
             auto* v_ty = resolve_type_node(stmt->type_annot);
             if (!v_ty) {
@@ -753,9 +798,17 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
                         }
                     }
                 } else if (stmt->init_expr->kind == ExprKind::ArrayLiteral) {
-                    for (size_t i = 0; i < stmt->init_expr->args.size(); ++i) {
-                        emit_expression(stmt->init_expr->args[i]);
-                        text_sec_ << "    mov [rbp - " << (stack_offset - i * 4) << "], eax\n";
+                    if (stmt->init_expr->is_repeat_fill && v_ty && v_ty->kind == SemaType::Kind::Array) {
+                        uint64_t arr_len = std::get<ArrayTypeInfo>(v_ty->data).size;
+                        emit_expression(stmt->init_expr->args[0]);
+                        for (uint64_t i = 0; i < arr_len; ++i) {
+                            text_sec_ << "    mov [rbp - " << (stack_offset - i * 4) << "], eax\n";
+                        }
+                    } else {
+                        for (size_t i = 0; i < stmt->init_expr->args.size(); ++i) {
+                            emit_expression(stmt->init_expr->args[i]);
+                            text_sec_ << "    mov [rbp - " << (stack_offset - i * 4) << "], eax\n";
+                        }
                     }
                 } else if (stmt->init_expr->kind == ExprKind::SliceSubrange) {
                     auto* arr_expr = stmt->init_expr->left;
@@ -1093,6 +1146,15 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
         }
         case StmtKind::Return: {
             if (stmt->value_expr) emit_expression(stmt->value_expr);
+            bool has_defers = false;
+            for (const auto& scope : defer_scopes_) {
+                if (!scope.empty()) { has_defers = true; break; }
+            }
+            if (has_defers) {
+                text_sec_ << "    push rdx\n    push rax\n    sub rsp, 8\n    movsd [rsp], xmm0\n";
+                emit_deferred_statements(stack_offset);
+                text_sec_ << "    movsd xmm0, [rsp]\n    add rsp, 8\n    pop rax\n    pop rdx\n";
+            }
             text_sec_ << "    mov rsp, rbp\n    pop rbp\n    ret\n";
             break;
         }
@@ -1145,6 +1207,35 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 int64_t val = parse_literal_int_emitter(expr->raw_text);
                 text_sec_ << "    mov rax, " << val << "\n";
             }
+            break;
+        }
+        case ExprKind::BuiltinFile:
+        case ExprKind::BuiltinTarget:
+        case ExprKind::BuiltinArch:
+        case ExprKind::BuiltinEndian: {
+            std::string str_lbl = next_label("L_refl_str");
+            rodata_sec_ << str_lbl << ": db ";
+            for (char c : expr->raw_text) {
+                rodata_sec_ << (int)(unsigned char)c << ", ";
+            }
+            rodata_sec_ << "0\n";
+            text_sec_ << "    lea rax, [rel " << str_lbl << "]\n";
+            break;
+        }
+        case ExprKind::BuiltinLine: {
+            text_sec_ << "    mov eax, " << expr->evaluated_line << "\n";
+            break;
+        }
+        case ExprKind::BuiltinTypeof: {
+            auto* ty = get_expr_type(expr->left);
+            std::string ty_name = ty ? TypeChecker::get_type_name(ty) : "unknown";
+            std::string str_lbl = next_label("L_typeof_str");
+            rodata_sec_ << str_lbl << ": db ";
+            for (char c : ty_name) {
+                rodata_sec_ << (int)(unsigned char)c << ", ";
+            }
+            rodata_sec_ << "0\n";
+            text_sec_ << "    lea rax, [rel " << str_lbl << "]\n";
             break;
         }
         case ExprKind::Subject: {
@@ -1383,6 +1474,16 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             emit_expression(expr->left);
             text_sec_ << "    test rdx, rdx\n";
             text_sec_ << "    jz " << ok_lbl << "\n";
+            bool has_defers = false;
+            for (const auto& scope : defer_scopes_) {
+                if (!scope.empty()) { has_defers = true; break; }
+            }
+            if (has_defers) {
+                text_sec_ << "    push rdx\n    push rax\n";
+                uint32_t dummy_off = current_stack_offset_;
+                emit_deferred_statements(dummy_off);
+                text_sec_ << "    pop rax\n    pop rdx\n";
+            }
             text_sec_ << "    mov rsp, rbp\n    pop rbp\n    ret\n";
             text_sec_ << ok_lbl << ":\n";
             break;
@@ -1430,6 +1531,19 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 text_sec_ << "    cmp eax, 0\n    jne " << tlbl << "\n";
                 emit_expression(expr->right);
                 text_sec_ << "    cmp eax, 0\n    jne " << tlbl << "\n    xor eax, eax\n    jmp " << elbl << "\n" << tlbl << ":\n    mov eax, 1\n" << elbl << ":\n";
+                return;
+            }
+
+            // String equality comparisons
+            if ((expr->op == "==" || expr->op == "!=") && (is_string_expr(expr->left) || is_string_expr(expr->right))) {
+                emit_expression(expr->left);  text_sec_ << "    push rax\n";
+                emit_expression(expr->right); text_sec_ << "    mov rsi, rax\n    pop rdi\n";
+                text_sec_ << "    call strcmp\n";
+                if (expr->op == "==") {
+                    text_sec_ << "    cmp eax, 0\n    sete al\n    movzx eax, al\n";
+                } else {
+                    text_sec_ << "    cmp eax, 0\n    setne al\n    movzx eax, al\n";
+                }
                 return;
             }
 

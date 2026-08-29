@@ -247,7 +247,7 @@ ASTExpr* Parser::parse_primary_expression() {
         return un;
     }
 
-    // Builtins: @sizeof(T), @alignof(T), @bitcast(T, expr), @cast(T, expr)
+    // Builtins: @sizeof, @alignof, @cast, @bitcast, @typeof, @file, @line, @target, @arch, @endian
     if (current_.kind == TokenKind::AtBuiltin) {
         Token b_tok = current_;
         advance();
@@ -269,6 +269,52 @@ ASTExpr* Parser::parse_primary_expression() {
             e->kind = ExprKind::BuiltinAlignof;
             e->target_type = t;
             e->span = span.merge(current_.span);
+            return e;
+        }
+        if (b_tok.text == "@typeof") {
+            expect(TokenKind::LParen, "expected '(' after @typeof");
+            ASTExpr* arg = parse_expression();
+            expect(TokenKind::RParen, "expected ')'");
+            ASTExpr* e = arena_.allocate<ASTExpr>();
+            e->kind = ExprKind::BuiltinTypeof;
+            e->left = arg;
+            e->span = span.merge(current_.span);
+            return e;
+        }
+        if (b_tok.text == "@file") {
+            ASTExpr* e = arena_.allocate<ASTExpr>();
+            e->kind = ExprKind::BuiltinFile;
+            e->raw_text = lexer_.source_manager().filename();
+            e->span = span;
+            return e;
+        }
+        if (b_tok.text == "@line") {
+            auto lc = lexer_.source_manager().get_line_col(b_tok.span.start);
+            ASTExpr* e = arena_.allocate<ASTExpr>();
+            e->kind = ExprKind::BuiltinLine;
+            e->evaluated_line = lc.line;
+            e->span = span;
+            return e;
+        }
+        if (b_tok.text == "@target") {
+            ASTExpr* e = arena_.allocate<ASTExpr>();
+            e->kind = ExprKind::BuiltinTarget;
+            e->raw_text = "x86_64-linux";
+            e->span = span;
+            return e;
+        }
+        if (b_tok.text == "@arch") {
+            ASTExpr* e = arena_.allocate<ASTExpr>();
+            e->kind = ExprKind::BuiltinArch;
+            e->raw_text = "x86_64";
+            e->span = span;
+            return e;
+        }
+        if (b_tok.text == "@endian") {
+            ASTExpr* e = arena_.allocate<ASTExpr>();
+            e->kind = ExprKind::BuiltinEndian;
+            e->raw_text = "little";
+            e->span = span;
             return e;
         }
         if (b_tok.text == "@cast") {
@@ -356,9 +402,18 @@ ASTExpr* Parser::parse_primary_expression() {
         arr_lit->span = span;
 
         if (current_.kind != TokenKind::RBracket) {
-            do {
+            ASTExpr* first_elem = parse_expression();
+            if (match(TokenKind::DotDotDot)) {
+                arr_lit->is_repeat_fill = true;
+                arr_lit->args.push_back(first_elem);
+                expect(TokenKind::RBracket, "expected ']' closing repeat array literal");
+                return arr_lit;
+            }
+            arr_lit->args.push_back(first_elem);
+            while (match(TokenKind::Comma)) {
+                if (current_.kind == TokenKind::RBracket) break;
                 arr_lit->args.push_back(parse_expression());
-            } while (match(TokenKind::Comma));
+            }
         }
         expect(TokenKind::RBracket, "expected ']' closing array literal");
         return arr_lit;
@@ -898,6 +953,7 @@ ASTStmt* Parser::parse_statement() {
         return s;
     }
 
+    if (match(TokenKind::KwDefer)) return parse_defer_stmt();
     if (match(TokenKind::KwIf)) return parse_if_stmt();
     if (match(TokenKind::HashIf)) return parse_hash_if_stmt();
     if (match(TokenKind::KwWhile)) return parse_while_stmt();
@@ -1021,6 +1077,18 @@ ASTStmt* Parser::parse_statement() {
     s->kind = StmtKind::ExprStmt;
     s->value_expr = lval;
     s->span = lval ? lval->span.merge(current_.span) : start_span.merge(current_.span);
+    return s;
+}
+
+ASTStmt* Parser::parse_defer_stmt() {
+    auto* s = arena_.allocate<ASTStmt>();
+    s->kind = StmtKind::Defer;
+    s->span = current_.span;
+    if (current_.kind == TokenKind::LBrace) {
+        s->then_block = parse_block();
+    } else {
+        s->then_block.push_back(parse_statement());
+    }
     return s;
 }
 

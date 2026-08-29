@@ -113,6 +113,74 @@ std::string TypeChecker::get_type_name(const ASTType* ty) {
     return "int32";
 }
 
+std::string TypeChecker::get_type_name(const SemaType* ty) {
+    if (!ty) return "int32";
+    switch (ty->kind) {
+        case SemaType::Kind::Primitive: {
+            auto pk = std::get<PrimitiveTypeInfo>(ty->data).kind;
+            switch (pk) {
+                case TokenKind::KwAny: return "any";
+                case TokenKind::KwInt8: return "int8";
+                case TokenKind::KwInt16: return "int16";
+                case TokenKind::KwInt32: return "int32";
+                case TokenKind::KwInt64: return "int64";
+                case TokenKind::KwInt128: return "int128";
+                case TokenKind::KwInt256: return "int256";
+                case TokenKind::KwInt512: return "int512";
+                case TokenKind::KwUint8: return "uint8";
+                case TokenKind::KwUint16: return "uint16";
+                case TokenKind::KwUint32: return "uint32";
+                case TokenKind::KwUint64: return "uint64";
+                case TokenKind::KwUint128: return "uint128";
+                case TokenKind::KwUint256: return "uint256";
+                case TokenKind::KwUint512: return "uint512";
+                case TokenKind::KwFloat16: return "float16";
+                case TokenKind::KwFloat32: return "float32";
+                case TokenKind::KwFloat64: return "float64";
+                case TokenKind::KwFloat128: return "float128";
+                case TokenKind::KwBool8: return "bool8";
+                case TokenKind::KwBool16: return "bool16";
+                case TokenKind::KwBool32: return "bool32";
+                case TokenKind::KwBool64: return "bool64";
+                case TokenKind::KwBool128: return "bool128";
+                case TokenKind::KwBool256: return "bool256";
+                case TokenKind::KwBool512: return "bool512";
+                case TokenKind::KwChar8: return "char8";
+                case TokenKind::KwChar16: return "char16";
+                case TokenKind::KwChar32: return "char32";
+                case TokenKind::KwString8: return "string8";
+                case TokenKind::KwString16: return "string16";
+                case TokenKind::KwString32: return "string32";
+                case TokenKind::KwVoid: return "void";
+                default: return "int32";
+            }
+        }
+        case SemaType::Kind::Pointer: {
+            auto* p = std::get<PointerTypeInfo>(ty->data).pointee;
+            return get_type_name(p) + "*";
+        }
+        case SemaType::Kind::Array: {
+            auto& a = std::get<ArrayTypeInfo>(ty->data);
+            return get_type_name(a.element) + "[" + std::to_string(a.size) + "]";
+        }
+        case SemaType::Kind::Slice: {
+            auto* s = std::get<SliceTypeInfo>(ty->data).element;
+            return get_type_name(s) + "[]";
+        }
+        case SemaType::Kind::Result: {
+            auto* r = std::get<ResultTypeInfo>(ty->data).payload;
+            return "!" + (r ? get_type_name(r) : "void");
+        }
+        case SemaType::Kind::Struct: {
+            return std::get<StructTypeInfo>(ty->data).name;
+        }
+        case SemaType::Kind::Union: {
+            return std::get<UnionTypeInfo>(ty->data).name;
+        }
+    }
+    return "int32";
+}
+
 void TypeChecker::init_primitives() {
     auto make_prim = [&](TokenKind k, uint32_t sz) {
         auto* t = new SemaType{SemaType::Kind::Primitive, sz, sz, PrimitiveTypeInfo{k}};
@@ -443,6 +511,9 @@ int64_t TypeChecker::eval_const_expr(ASTExpr* expr) {
     if (expr->kind == ExprKind::Literal) {
         return parse_literal_int(expr->raw_text);
     }
+    if (expr->kind == ExprKind::BuiltinLine) {
+        return expr->evaluated_line;
+    }
     if (expr->kind == ExprKind::Identifier) {
         auto it = const_defs_.find(std::string(expr->raw_text));
         if (it != const_defs_.end()) return it->second;
@@ -602,6 +673,10 @@ void TypeChecker::check_statement(ASTStmt* stmt, SemaType* return_type, ASTProgr
             }
             break;
         }
+        case StmtKind::Defer: {
+            for (auto* s : stmt->then_block) check_statement(s, return_type, prog);
+            break;
+        }
         case StmtKind::While:
         case StmtKind::DoWhile: {
             current_loop_depth_++;
@@ -703,7 +778,15 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
             return type_env_["int32"];
         case ExprKind::BuiltinSizeof:
         case ExprKind::BuiltinAlignof:
+        case ExprKind::BuiltinLine:
             return type_env_["int32"];
+        case ExprKind::BuiltinTypeof:
+        case ExprKind::BuiltinFile:
+        case ExprKind::BuiltinTarget:
+        case ExprKind::BuiltinArch:
+        case ExprKind::BuiltinEndian:
+            if (expr->left) check_expression(expr->left, prog);
+            return type_env_["string8"];
         case ExprKind::Cast: {
             check_expression(expr->left, prog);
             return resolve_ast_type(expr->target_type);
@@ -833,7 +916,8 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
                 elem_t = check_expression(a, prog);
             }
             if (!elem_t) elem_t = type_env_["int32"];
-            auto* arr_t = new SemaType{SemaType::Kind::Array, (uint32_t)(elem_t->size_bytes * expr->args.size()), elem_t->align_bytes, ArrayTypeInfo{elem_t, expr->args.size()}};
+            uint64_t count = expr->is_repeat_fill ? 1 : expr->args.size();
+            auto* arr_t = new SemaType{SemaType::Kind::Array, (uint32_t)(elem_t->size_bytes * count), elem_t->align_bytes, ArrayTypeInfo{elem_t, count}};
             return arr_t;
         }
         case ExprKind::Binary: {

@@ -22,13 +22,14 @@ add_custom_command(
 # Custom target ensuring femto_rt.o is always built
 add_custom_target(femto_runtime ALL DEPENDS ${RUNTIME_OBJ})
 
-# Main compiler executable
+# Main compiler executable with LSP support
 add_executable(femtoc
     src/main.cpp
     src/frontend/lexer.cpp
     src/frontend/parser.cpp
     src/sema/type_checker.cpp
     src/codegen/nasm_emitter.cpp
+    src/lsp/lsp_server.cpp
 )
 
 # Make compiler binary depend on runtime object build
@@ -47,10 +48,12 @@ add_executable(femto_unit_tests
     tests/unit/test_parser.cpp
     tests/unit/test_sema.cpp
     tests/unit/test_codegen.cpp
+    tests/unit/test_lsp.cpp
     src/frontend/lexer.cpp
     src/frontend/parser.cpp
     src/sema/type_checker.cpp
     src/codegen/nasm_emitter.cpp
+    src/lsp/lsp_server.cpp
 )
 
 add_dependencies(femto_unit_tests femto_runtime)

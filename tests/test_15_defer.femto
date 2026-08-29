@@ -1,0 +1,45 @@
+// ============================================================================
+// FILE: tests/test_15_defer.femto
+// ============================================================================
+import std::io;
+
+#export
+test_defer_order :: (int32* trace_val) -> int32 {
+    defer *trace_val += 1;   // Executes 2nd on return (adds 1 -> 11)
+    defer *trace_val *= 2;   // Executes 1st on return (multiplies by 2 -> 10)
+
+    *trace_val = 5;
+    return 42; // Returns 42 while deferred statements run in LIFO order
+}
+
+#export
+test_defer_early_return :: (int32* trace_val, int32 should_bail) -> int32 {
+    defer *trace_val += 100;
+
+    if (should_bail == 1) then {
+        return 99; // Bail out: triggers deferred block
+    }
+
+    *trace_val = 10;
+    return 0;
+}
+
+#export
+main :: () -> int32 {
+    int32 trace1 = 0;
+    int32 r1 = test_defer_order(&trace1);
+
+    // Expected: 5 * 2 + 1 = 11, return = 42
+    std::io::println("Defer LIFO trace: {}", trace1);
+
+    int32 trace2 = 0;
+    int32 r2 = test_defer_early_return(&trace2, 1);
+    // Expected: 0 + 100 = 100, return = 99
+    std::io::println("Defer Early Return trace: {}", trace2);
+
+    if (r1 == 42 && trace1 == 11 && r2 == 99 && trace2 == 100) then {
+        std::io::println("[PASS] test_15_defer");
+        return 0;
+    }
+    return 1;
+}

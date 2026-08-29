@@ -27,6 +27,51 @@ TEST_CASE(Parser, BasicTypeParsing) {
     ASSERT_EQ(prog.functions[0]->body.size(), 5u);
 }
 
+TEST_CASE(Parser, ArrayRepeatFillParsing) {
+    std::string src =
+        "test_arr :: () -> void {\n"
+        "    int32[8] zeroed = [0...];\n"
+        "    float64[16] ones = [1.0...];\n"
+        "}\n";
+
+    SourceManager sm("test.femto", src);
+    Diagnostics diag(sm);
+    Arena arena;
+    Lexer lexer(sm, diag);
+    Parser parser(lexer, arena, diag);
+
+    ASTProgram prog = parser.parse_program();
+    ASSERT_FALSE(diag.has_errors());
+    ASSERT_EQ(prog.functions.size(), 1u);
+
+    auto* s1 = prog.functions[0]->body[0];
+    ASSERT_TRUE(s1->init_expr->is_repeat_fill);
+    ASSERT_EQ(s1->init_expr->args.size(), 1u);
+}
+
+TEST_CASE(Parser, ReflectionIntrinsics) {
+    std::string src =
+        "test_refl :: () -> void {\n"
+        "    string8 f = @file;\n"
+        "    int32 l = @line;\n"
+        "    string8 t = @target;\n"
+        "    string8 a = @arch;\n"
+        "    string8 e = @endian;\n"
+        "    string8 ty = @typeof(l);\n"
+        "}\n";
+
+    SourceManager sm("test.femto", src);
+    Diagnostics diag(sm);
+    Arena arena;
+    Lexer lexer(sm, diag);
+    Parser parser(lexer, arena, diag);
+
+    ASTProgram prog = parser.parse_program();
+    ASSERT_FALSE(diag.has_errors());
+    ASSERT_EQ(prog.functions.size(), 1u);
+    ASSERT_EQ(prog.functions[0]->body.size(), 6u);
+}
+
 TEST_CASE(Parser, FunctionDeclarations) {
     std::string src = 
         "#export\n"
@@ -156,6 +201,7 @@ TEST_CASE(Parser, ControlFlowStatements) {
         "    do { c--; } while (c > 0);\n"
         "    for (int32 i = 0; i < 5; i++) { break(2); }\n"
         "    foreach (int32 idx, int32 v in [1, 2, 3]) { continue; }\n"
+        "    defer { c = 0; }\n"
         "    match (c) {\n"
         "        # == 1 { 10 }\n"
         "        default { 0 }\n"
@@ -171,5 +217,5 @@ TEST_CASE(Parser, ControlFlowStatements) {
     ASTProgram prog = parser.parse_program();
     ASSERT_FALSE(diag.has_errors());
     ASSERT_EQ(prog.functions.size(), 1u);
-    ASSERT_EQ(prog.functions[0]->body.size(), 6u);
+    ASSERT_EQ(prog.functions[0]->body.size(), 7u);
 }

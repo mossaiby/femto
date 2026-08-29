@@ -11,13 +11,19 @@
 #include "common/arena.hpp"
 #include "common/source_manager.hpp"
 #include "common/diagnostic.hpp"
+#include "common/module_loader.hpp"
 #include "frontend/lexer.hpp"
 #include "frontend/parser.hpp"
 #include "sema/type_checker.hpp"
 #include "codegen/nasm_emitter.hpp"
+#include "lsp/lsp_server.hpp"
 
 #ifndef FEMTO_RUNTIME_OBJ
 #define FEMTO_RUNTIME_OBJ "runtime/femto_rt.o"
+#endif
+
+#ifndef FEMTO_STDLIB_DIR
+#define FEMTO_STDLIB_DIR "stdlib"
 #endif
 
 namespace fs = std::filesystem;
@@ -35,155 +41,22 @@ static fs::path get_executable_dir(const char* argv0) {
     }
 }
 
-class ModuleLoader {
-public:
-    ModuleLoader(const std::vector<std::string>& search_paths, femto::Arena& arena)
-        : search_paths_(search_paths), arena_(arena) {}
-
-    bool load_module_recursive(const std::string& filepath, const std::string& mod_prefix, femto::ASTProgram& master_prog, femto::Diagnostics& diag) {
-        std::string canonical_path;
-        try {
-            if (!fs::exists(filepath)) {
-                std::cerr << "error: file not found: '" << filepath << "'\n";
-                return false;
-            }
-            canonical_path = fs::canonical(filepath).string();
-        } catch (...) {
-            canonical_path = filepath;
-        }
-
-        if (visited_files_.count(canonical_path)) {
-            return true;
-        }
-        visited_files_.insert(canonical_path);
-
-        std::ifstream file(canonical_path);
-        if (!file.is_open()) {
-            std::cerr << "error: failed to open '" << canonical_path << "'\n";
-            return false;
-        }
-        std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-
-        auto* sm = arena_.allocate<femto::SourceManager>(canonical_path, source);
-        femto::Lexer lexer(*sm, diag);
-        femto::Parser parser(lexer, arena_, diag);
-
-        femto::ASTProgram prog = parser.parse_program();
-        if (diag.has_errors()) {
-            return false;
-        }
-
-        for (const auto& imp : prog.imports) {
-            std::string resolved_file = resolve_import_path(imp, canonical_path);
-            if (resolved_file.empty()) {
-                std::cerr << "error: cannot find module '" << imp << "' imported in '" << canonical_path << "'\n";
-                return false;
-            }
-            std::string sub_prefix;
-            for (char c : imp) {
-                if (c == '/') {
-                    sub_prefix += "::";
-                } else {
-                    sub_prefix += c;
-                }
-            }
-            if (!load_module_recursive(resolved_file, sub_prefix, master_prog, diag)) {
-                return false;
-            }
-        }
-
-        for (auto* fn : prog.functions) {
-            if (!mod_prefix.empty() && fn->name.find("::") == std::string_view::npos) {
-                if (fn->is_extern_c) {
-                    master_prog.functions.push_back(fn);
-                    std::string q_name = mod_prefix + "::" + std::string(fn->name);
-                    char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
-                    std::memcpy(q_buf, q_name.data(), q_name.size());
-                    q_buf[q_name.size()] = '\0';
-
-                    auto* alias_fn = arena_.allocate<femto::ASTFunctionDecl>(*fn);
-                    alias_fn->name = std::string_view(q_buf, q_name.size());
-                    master_prog.functions.push_back(alias_fn);
-                } else {
-                    std::string q_name = mod_prefix + "::" + std::string(fn->name);
-                    char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
-                    std::memcpy(q_buf, q_name.data(), q_name.size());
-                    q_buf[q_name.size()] = '\0';
-                    fn->name = std::string_view(q_buf, q_name.size());
-                    master_prog.functions.push_back(fn);
-                }
-            } else {
-                master_prog.functions.push_back(fn);
-            }
-        }
-        for (auto* st : prog.structs) {
-            master_prog.structs.push_back(st);
-            if (!mod_prefix.empty() && st->name.find("::") == std::string_view::npos) {
-                std::string q_name = mod_prefix + "::" + std::string(st->name);
-                char* q_buf = (char*)arena_.allocate_bytes(q_name.size() + 1, 1);
-                std::memcpy(q_buf, q_name.data(), q_name.size());
-                q_buf[q_name.size()] = '\0';
-
-                auto* alias_st = arena_.allocate<femto::ASTStructDecl>(*st);
-                alias_st->name = std::string_view(q_buf, q_name.size());
-                master_prog.structs.push_back(alias_st);
-            }
-        }
-        for (auto* un : prog.unions)    master_prog.unions.push_back(un);
-        for (auto* en : prog.enums)     master_prog.enums.push_back(en);
-        for (auto* cn : prog.constants) master_prog.constants.push_back(cn);
-
-        return true;
-    }
-
-private:
-    std::string resolve_import_path(const std::string& mod_name, const std::string& current_file) {
-        std::string rel_file = mod_name + ".femto";
-
-        fs::path cur_dir = fs::path(current_file).parent_path();
-        if (fs::exists(cur_dir / rel_file)) {
-            return (cur_dir / rel_file).string();
-        }
-
-        for (const auto& sp : search_paths_) {
-            fs::path p = fs::path(sp) / rel_file;
-            if (fs::exists(p)) {
-                return p.string();
-            }
-        }
-
-        return "";
-    }
-
-    std::vector<std::string> search_paths_;
-    std::unordered_set<std::string> visited_files_;
-    femto::Arena& arena_;
-};
-
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: femtoc <source.femto> [options]\n"
-                  << "Options:\n"
-                  << "  -o <file>             Specify output executable name (default: a.out)\n"
-                  << "  -I <dir>              Add search directory for imports\n"
-                  << "  --stdlib <dir>        Specify the path to the standard library\n"
-                  << "  --no-bounds-check     Disable runtime array and slice bounds checks\n"
-                  << "  --keep-temps, -k      Keep intermediate assembly (.asm) and object (.o) files\n";
-        return 1;
-    }
-
     std::string primary_input;
     std::string output_path = "a.out";
     std::string stdlib_dir;
     bool keep_temps = false;
     bool enable_bounds_checks = true;
+    bool is_lsp_mode = false;
     std::vector<std::string> search_paths = { "." };
 
     fs::path exe_dir = get_executable_dir(argv[0]);
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "-o" && i + 1 < argc) {
+        if (arg == "--lsp") {
+            is_lsp_mode = true;
+        } else if (arg == "-o" && i + 1 < argc) {
             output_path = argv[++i];
         } else if (arg == "-I" && i + 1 < argc) {
             search_paths.push_back(argv[++i]);
@@ -200,34 +73,52 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (primary_input.empty()) {
-        std::cerr << "error: no input file specified\n";
-        return 1;
-    }
-
+    // Resolve standard library directory
     if (stdlib_dir.empty()) {
         fs::path default_stdlib = exe_dir / "stdlib";
         if (fs::exists(default_stdlib)) {
             stdlib_dir = default_stdlib.string();
-        } else {
-            std::cerr << "error: stdlib directory not found at '" << default_stdlib.string()
-                      << "'. Please specify the stdlib location using --stdlib <path>\n";
-            return 1;
-        }
-    } else {
-        if (!fs::exists(stdlib_dir)) {
-            std::cerr << "error: specified stdlib directory does not exist: '" << stdlib_dir << "'\n";
-            return 1;
+        } else if (fs::exists(FEMTO_STDLIB_DIR)) {
+            stdlib_dir = FEMTO_STDLIB_DIR;
+        } else if (fs::exists(exe_dir.parent_path() / "stdlib")) {
+            stdlib_dir = (exe_dir.parent_path() / "stdlib").string();
         }
     }
 
-    search_paths.push_back(stdlib_dir);
+    if (!stdlib_dir.empty() && fs::exists(stdlib_dir)) {
+        search_paths.push_back(stdlib_dir);
+    }
+
+    // Run in Language Server Mode if requested
+    if (is_lsp_mode) {
+        femto::lsp::LspServer server;
+        server.set_search_paths(search_paths);
+        server.run();
+        return 0;
+    }
+
+    if (primary_input.empty()) {
+        std::cerr << "Usage: femtoc <source.femto> [options]\n"
+                  << "Options:\n"
+                  << "  -o <file>             Specify output executable name (default: a.out)\n"
+                  << "  -I <dir>              Add search directory for imports\n"
+                  << "  --stdlib <dir>        Specify the path to the standard library\n"
+                  << "  --lsp                 Start the Language Server Protocol (LSP) daemon\n"
+                  << "  --no-bounds-check     Disable runtime array and slice bounds checks\n"
+                  << "  --keep-temps, -k      Keep intermediate assembly (.asm) and object (.o) files\n";
+        return 1;
+    }
+
+    if (stdlib_dir.empty() || !fs::exists(stdlib_dir)) {
+        std::cerr << "error: stdlib directory not found. Please specify using --stdlib <path>\n";
+        return 1;
+    }
 
     femto::Arena arena;
     femto::SourceManager dummy_sm(primary_input, "");
     femto::Diagnostics diag(dummy_sm);
 
-    ModuleLoader loader(search_paths, arena);
+    femto::ModuleLoader loader(search_paths, arena);
     femto::ASTProgram master_prog;
 
     if (!loader.load_module_recursive(primary_input, "", master_prog, diag)) {

@@ -2,7 +2,7 @@
 
 Femto is a modern, statically typed, compiled systems programming language designed for deterministic performance, high safety guarantees, and low-level control without runtime overhead.
 
-This repository contains the language specification, the standard library, the reference compiler implementation written in ISO C++20 targeting x86-64 Linux (NASM/libc/System V AMD64 ABI), and the official Visual Studio Code syntax extension.
+This repository contains the language specification, the standard library, the reference compiler implementation with built-in Language Server Protocol (`femtoc --lsp`) written in ISO C++20 targeting x86-64 Linux (NASM/libc/System V AMD64 ABI), and the official Visual Studio Code extension.
 
 ---
 
@@ -18,14 +18,14 @@ This repository contains the language specification, the standard library, the r
   - [6. Pointers, Arrays, and Slices](#6-pointers-arrays-and-slices)
   - [7. Structs, Enums, and Unions](#7-structs-enums-and-unions)
   - [8. Operators and Casting](#8-operators-and-casting)
-  - [9. Control Flow](#9-control-flow)
+  - [9. Control Flow & `defer`](#9-control-flow--defer)
   - [10. Error Handling (`!T` / `!void`)](#10-error-handling-t-and-void)
   - [11. Modules, Visibility, and C Interop](#11-modules-visibility-and-c-interop)
   - [12. Compile-Time Metaprogramming](#12-compile-time-metaprogramming)
 - [ABI and Memory Layout](#abi-and-memory-layout)
-- [Compiler Architecture](#compiler-architecture)
+- [Compiler & LSP Architecture](#compiler--lsp-architecture)
 - [Project Layout](#project-layout)
-- [Editor Support (VS Code)](#editor-support-vs-code)
+- [Editor Support (VS Code & LSP)](#editor-support-vs-code--lsp)
 - [Prerequisites and Toolchain](#prerequisites-and-toolchain)
 - [Building the Compiler](#building-the-compiler)
 - [Automated Test Suite](#automated-test-suite)
@@ -39,6 +39,10 @@ This repository contains the language specification, the standard library, the r
 - **No Undefined States:** Mandatory variable initialization; no implicit uninitialized memory reads.
 - **Fixed-Width Primitives:** Strict, platform-independent sizing (`int8`–`int512`, `uint8`–`uint512`, `float16`–`float128`, `uint64` indexing).
 - **Type-Erased Variadics (`any... args`):** First-class polymorphic formatting and variadic functions with `{}` placeholder templates and zero hidden heap allocations.
+- **Deterministic Cleanup (`defer`):** First-class LIFO resource cleanup on block exits, early returns, and error unwraps with automatic return value register preservation.
+- **Compile-Time Reflection:** Built-in reflection intrinsics (`@typeof`, `@file`, `@line`, `@target`, `@arch`, `@endian`, `@sizeof`, `@alignof`).
+- **Array Fill Syntax:** Full support for repeat-fill initialization (`int32[8] zeroed = [0...];`).
+- **Full Language Server Protocol (`femtoc --lsp`):** Out-of-the-box live diagnostics, type hovers, autocompletion with snippets & member fields, signature help, definition navigation (`F12`), symbol renaming (`F2`), references (`Shift+F12`), document formatting (`Shift+Alt+F`), and symbol outlines for VS Code.
 - **Zero-Cost Generics:** Monomorphized compile-time generics with zero runtime metadata overhead.
 - **Explicit Type Conversions:** Clear taxonomy distinguishing safe widening conversions, explicit casts (`@cast`), and bit reinterpretation (`@bitcast`).
 - **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with first-class syntactic support (`??`) and zero exception overhead.
@@ -60,7 +64,7 @@ This repository contains the language specification, the standard library, the r
 | **Floating-Point** | `float16`, `float32`, `float64`, `float128` | IEEE 754 standard formats passed via SSE vector registers (`XMM0`–`XMM7`). |
 | **Boolean** | `bool8`, `bool16`, `bool32`, `bool64`, `bool128`, `bool256`, `bool512` | `0` is `false`; non-zero is `true`. Logical ops yield canonical `1`. |
 | **Code Units** | `char8`, `char16`, `char32` | UTF-8, UTF-16, and UTF-32 sized code unit primitives. |
-| **Strings** | `string8`, `string16`, `string32` | Fat-pointer string references: `{ const charN* data, uint64 length }`. |
+| **Strings** | `string8`, `string16`, `string32` | Fat-pointer string references: `{ const charN* data, uint64 length }`. Supports `==` and `!=`. |
 | **Type Reflection** | `any` | 16-byte value fat-pointer: `{ int64 data, uint64 type_id }`. |
 | **Unit / Void** | `void` | Return-type marker only. |
 
@@ -87,6 +91,7 @@ const int32 y = 100;             // Immutable binding (compile-time checked)
 
 Point p = { .x = 10, .y = 20 };  // Designated struct field initialization
 int32[4] arr = [1, 2, 3, 4];     // Fixed-size stack array
+int32[8] zeroed = [0...];        // Fill all 8 elements with 0
 int32[] slice = arr[0..3];       // Slice view over subrange [0, 3)
 
 // Compile-time constants
@@ -149,7 +154,7 @@ int32 m = max<int32>(3, 7);
 ### 6. Pointers, Arrays, and Slices
 
 - **Raw Pointer (`T*`)**: Address-of `&x`, dereference `*p`. Single-level auto-dereferencing applies for member access (`p.field` desugars to `(*p).field`).
-- **Fixed-Size Array (`T[N]`)**: Contiguous value type allocated inline or on stack with fixed compile-time size `N`.
+- **Fixed-Size Array (`T[N]`)**: Contiguous value type allocated inline or on stack with fixed compile-time size `N`. Supports fill initialization `[val...]`.
 - **Slice (`T[]`)**: 16-byte value fat-pointer `{ T* data, uint64 length }`.
 - **Bounds Checking**: Sub-slicing `arr[start..end]` and element indexing `slice[i]` perform runtime safety bounds validation, calling panic handlers if violated.
 
@@ -181,13 +186,13 @@ DataUnion :: union {
 
 - **Assignment & Compound Ops:** `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `++`, `--` are statements.
 - **Arithmetic & Bitwise:** `+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `~`, `<<`, `>>`.
-- **Logical:** `&&`, `||`, `!` (short-circuiting).
+- **Logical & String Comparisons:** `&&`, `||`, `!`, and string equality `==` / `!=`.
 - **Explicit Casting:** `@cast(TargetType, expr)` performs checked widening/narrowing or float/int conversions.
 - **Bitcasting:** `@bitcast(TargetType, expr)` reinterprets bit patterns of equal-sized types.
 
 ---
 
-### 9. Control Flow
+### 9. Control Flow & `defer`
 
 #### Conditionals & Loops
 ```c++
@@ -211,6 +216,19 @@ for (int32 i = 0; i < 10; i++) {
 // Multi-Level Break / Continue
 break(2);     // Break out of 2 enclosing loops/switches
 continue(2);  // Continue parent loop
+```
+
+#### Deterministic Resource Cleanup (`defer`)
+```c++
+read_and_process :: (string8 path) -> !int32 {
+    int32 fd = std::fs::open_read(path)??;
+    defer std::fs::close_file(fd); // Automatically called upon any exit / error unwrap
+
+    int64 buf = std::c::malloc(1024);
+    defer std::c::free(buf);       // LIFO order: freed before file is closed
+
+    return success(0);
+}
 ```
 
 #### Pattern Matching & Foreach
@@ -247,7 +265,7 @@ safe_divide :: (int32 a, int32 b) -> !int32 {
 }
 
 calculate :: (int32 a, int32 b) -> !int32 {
-    // '??' unwraps payload or immediately returns failure upward
+    // '??' unwraps payload or immediately runs defers and returns failure
     int32 result = safe_divide(a, b)??;
     return success(result * 2);
 }
@@ -294,10 +312,11 @@ main :: () -> int32 {
 
 - Static conditionals: `#if (cond) { ... } #else { ... }`
 - Built-in reflection & size intrinsics:
-  - `@sizeof(T)`
-  - `@alignof(T)`
-  - `@cast(TargetType, expr)`
-  - `@bitcast(TargetType, expr)`
+  - `@typeof(expr)`: Evaluates the compile-time type name of an expression as a `string8`.
+  - `@file`, `@line`: Resolves current source file path and line number.
+  - `@target`, `@arch`, `@endian`: Evaluates target architecture and platform strings.
+  - `@sizeof(T)`, `@alignof(T)`: Computes struct, union, or primitive sizes and alignment bytes.
+  - `@cast(TargetType, expr)`, `@bitcast(TargetType, expr)`.
 
 ---
 
@@ -317,38 +336,40 @@ Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
 
 ---
 
-## Compiler Architecture
+## Compiler & LSP Architecture
 
 ```
                       Source Code (.femto)
                                │
-                               ▼
-                       [ Arena Allocator ]
-                               │
-                               ▼
-                           [ Lexer ] ──► Token Stream
-                               │
-                               ▼
-                          [ Parser ] ──► Abstract Syntax Tree (AST)
-                               │
-                               ▼
-                     [ Type Checker & Sema ]
-                      ├── Monomorphization
-                      ├── Memory Layout Calculation
-                      └── Compile-Time Const Eval
-                               │
-                               ▼
-                      [ NASM Code Generator ]
-                      ├── Dynamic Stack Frame Calculation
-                      ├── 16-Byte System V ABI Alignment
-                      ├── Auto-Packed `any...` Slice Lowering
-                      └── Sized Instruction Lowering
-                               │
-                               ▼
-                      Assembly File (.asm)
-                               │
-                               ▼
-                   [ nasm -f elf64 + gcc ] ──► Native ELF-64 Executable
+            ┌──────────────────┴──────────────────┐
+            ▼ (Batch Mode)                        ▼ (LSP Mode: femtoc --lsp)
+   [ Arena Allocator ]                   [ LSP JSON-RPC Engine ]
+            │                                     │
+            ▼                                     ├── Live Diagnostics
+        [ Lexer ] ──► Token Stream                ├── Type Hover Inspection
+            │                                     ├── Definition Navigation (F12)
+            ▼                                     ├── Symbol Rename (F2)
+       [ Parser ] ──► Abstract Syntax Tree (AST)  ├── Find References (Shift+F12)
+            │                                     ├── Document Formatting
+            ▼                                     ├── Smart Autocompletion
+  [ Type Checker & Sema ]                         ├── Signature Help
+   ├── Monomorphization                           └── Document Symbol Outline
+   ├── Memory Layout Calculation
+   └── Compile-Time Const Eval
+            │
+            ▼
+   [ NASM Code Generator ]
+   ├── Dynamic Stack Frame Calculation
+   ├── 16-Byte System V ABI Alignment
+   ├── LIFO Defer Execution Engine
+   ├── Auto-Packed `any...` Slice Lowering
+   └── Sized Instruction Lowering
+            │
+            ▼
+   Assembly File (.asm)
+            │
+            ▼
+[ nasm -f elf64 + gcc ] ──► Native ELF-64 Executable
 ```
 
 ---
@@ -366,6 +387,7 @@ femto/
 │   ├── common/
 │   │   ├── arena.hpp           # Memory arena buffer resource
 │   │   ├── diagnostic.hpp      # ANSI source diagnostics reporting
+│   │   ├── module_loader.hpp   # Recursive multi-module resolver
 │   │   └── source_manager.hpp  # Line/column tracking & binary search
 │   ├── frontend/
 │   │   ├── token.hpp           # Token taxonomy
@@ -374,8 +396,11 @@ femto/
 │   │   └── parser.hpp / .cpp   # Pratt precedence parser & AST builder
 │   ├── sema/
 │   │   └── type_checker.hpp / .cpp # Type verification & monomorphizer
-│   └── codegen/
-│       └── nasm_emitter.hpp / .cpp # x86-64 Intel NASM code generator
+│   ├── codegen/
+│   │   └── nasm_emitter.hpp / .cpp # x86-64 Intel NASM code generator
+│   └── lsp/
+│       ├── json.hpp            # Zero-dependency JSON parser & serializer
+│       └── lsp_server.hpp / .cpp # Language Server Protocol daemon
 ├── stdlib/
 │   └── std/
 │       ├── builtin.femto       # Builtin runtime bindings
@@ -388,8 +413,9 @@ femto/
 │       ├── string.femto        # Dynamic growable String builder
 │       └── sys.femto           # Process exit & panic utilities
 ├── editors/
-│   └── vscode/                 # Visual Studio Code syntax highlighting extension
+│   └── vscode/                 # Visual Studio Code syntax & LSP extension
 │       ├── package.json
+│       ├── extension.js
 │       ├── language-configuration.json
 │       ├── README.md
 │       └── syntaxes/
@@ -401,31 +427,34 @@ femto/
     │   ├── test_lexer.cpp      # Lexer component test cases
     │   ├── test_parser.cpp     # Parser component test cases
     │   ├── test_sema.cpp       # Semantic analyzer & layout tests
-    │   └── test_codegen.cpp    # Code generation & frame sizing tests
+    │   ├── test_codegen.cpp    # Code generation & frame sizing tests
+    │   └── test_lsp.cpp        # Language Server Protocol unit tests
     ├── negative/               # Tier 2: Negative compilation rejection tests
     │   ├── neg_01_type_mismatch.femto
     │   ├── neg_02_const_mutation.femto
     │   ├── neg_03_break_depth.femto
     │   ├── neg_04_missing_then.femto
     │   └── neg_05_uninitialized.femto
-    └── test_*.femto            # Tier 3: End-to-end integration tests
+    └── test_*.femto            # Tier 3: End-to-end integration tests (16 test suites)
 ```
 
 ---
 
-## Editor Support (VS Code)
+## Editor Support (VS Code & LSP)
 
-The repository includes a syntax highlighting extension for Visual Studio Code in `editors/vscode`.
+The repository includes a full Language Server Protocol extension for Visual Studio Code in `editors/vscode`.
 
 To install it locally:
 ```bash
 ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/femto-vscode
+cd editors/vscode && npm install
 ```
 Or on Windows (PowerShell):
 ```powershell
 New-Item -ItemType SymbolicLink -Path "$HOME\.vscode\extensions\femto-vscode" -Target "$PWD\editors\vscode"
+cd editors/vscode; npm install
 ```
-Reload VS Code to enable syntax coloring, bracket matching, and auto-indentation for all `.femto` files.
+Reload VS Code to enable real-time red squiggly error diagnostics, type hovers, autocompletions with snippets & member fields, signature help, definition navigation (`F12`), symbol renaming (`F2`), find references (`Shift+F12`), document formatting (`Shift+Alt+F`), and document outlines.
 
 ---
 
@@ -449,7 +478,7 @@ Reload VS Code to enable syntax coloring, bracket matching, and auto-indentation
    ```
 
 2. **Binaries generated in `build/`:**
-   - `femtoc`: The Femto reference compiler executable.
+   - `femtoc`: The Femto reference compiler & LSP server (`femtoc --lsp`).
    - `femto_unit_tests`: The native C++ component test runner.
    - `femto_rt.o`: The assembled native runtime object.
 
@@ -459,9 +488,9 @@ Reload VS Code to enable syntax coloring, bracket matching, and auto-indentation
 
 Femto features a unified 3-tier test suite:
 
-1. **Tier 1 (Internal Unit Tests):** Verifies internal compiler components (`Lexer`, `Parser`, `Sema`, `TypeChecker`, `Monomorphizer`, `NasmEmitter`) in isolation.
+1. **Tier 1 (Internal Unit Tests):** Verifies internal compiler components (`Lexer`, `Parser`, `Sema`, `TypeChecker`, `Monomorphizer`, `NasmEmitter`, `LspServer`) in isolation.
 2. **Tier 2 (Negative Diagnostic Tests):** Verifies that semantic and syntactic errors (e.g. type mismatches, mutating `const` variables, invalid `break` levels) are rejected with accurate diagnostics.
-3. **Tier 3 (End-to-End Tests):** Compiles and executes comprehensive `.femto` test suites verifying integer math, floats, control flow, pattern matching, structs, unions, pointers, slices, results, generics, metaprogramming, C-FFI variadics, native `{}` formatting, and stdlib modules.
+3. **Tier 3 (End-to-End Tests):** Compiles and executes comprehensive `.femto` test suites verifying integer math, floats, control flow, `defer` LIFO cleanup, pattern matching, structs, unions, pointers, slices, results, generics, metaprogramming, C-FFI variadics, native `{}` formatting, array repeat fills (`[val...]`), reflection intrinsics, and stdlib modules.
 
 ### Running All Tests
 
@@ -481,12 +510,19 @@ cmake --build build --target check
 1. **Write a program (`hello.femto`):**
    ```c++
    import std::io;
+   import std::fs;
 
    #export
    main :: () -> int32 {
        int32 apples = 3;
        string8 person = "Joe";
        std::io::println("I have {} apples I got from {}", apples, person);
+
+       // Clean resource cleanup using defer
+       int32 fd = std::fs::open_write("output.txt")??;
+       defer std::fs::close_file(fd);
+
+       std::fs::write_str(fd, "Femto is operational!\n");
        return 0;
    }
    ```

@@ -16,6 +16,7 @@ static const std::unordered_map<std::string_view, TokenKind> KEYWORDS = {
     {"failure", TokenKind::KwFailure}, {"true", TokenKind::KwTrue}, {"false", TokenKind::KwFalse},
     {"void", TokenKind::KwVoid}, {"in", TokenKind::KwIn}, {"default", TokenKind::KwDefault},
     {"const", TokenKind::KwConst}, {"union", TokenKind::KwUnion}, {"any", TokenKind::KwAny},
+    {"defer", TokenKind::KwDefer},
     
     {"int8", TokenKind::KwInt8}, {"int16", TokenKind::KwInt16}, {"int32", TokenKind::KwInt32},
     {"int64", TokenKind::KwInt64}, {"int128", TokenKind::KwInt128}, {"int256", TokenKind::KwInt256}, {"int512", TokenKind::KwInt512},

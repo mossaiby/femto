@@ -1,0 +1,44 @@
+// ============================================================================
+// FILE: tests/test_16_reflection_and_arrays.femto
+// ============================================================================
+import std::io;
+
+#export
+main :: () -> int32 {
+    // 1. Array repeat initialization syntax ([val...])
+    int32[8] zeroed = [0...];
+    int32[4] sevens = [7...];
+
+    int32 zero_sum = 0;
+    for (int32 i = 0; i < 8; i++) {
+        zero_sum += zeroed[i];
+    } // 0
+
+    int32 sevens_sum = 0;
+    for (int32 j = 0; j < 4; j++) {
+        sevens_sum += sevens[j];
+    } // 4 * 7 = 28
+
+    // 2. Reflection intrinsics
+    int32 current_line = @line;
+    string8 arch = @arch;
+    string8 endian = @endian;
+    string8 target = @target;
+
+    int32 x = 42;
+    string8 ty_x = @typeof(x);
+
+    // 3. String comparisons (== and !=)
+    int32 cmp_ok = 0;
+    if (arch == "x86_64" && endian == "little" && target == "x86_64-linux" && ty_x == "int32" && arch != "arm64") then {
+        cmp_ok = 1;
+    }
+
+    std::io::println("Reflection info: arch={}, endian={}, target={}, typeof(x)={}", arch, endian, target, ty_x);
+
+    if (zero_sum == 0 && sevens_sum == 28 && current_line > 0 && cmp_ok == 1) then {
+        std::io::println("[PASS] test_16_reflection_and_arrays");
+        return 0;
+    }
+    return 1;
+}

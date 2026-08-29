@@ -69,6 +69,7 @@ private:
     ASTStmt* parse_break_stmt();
     ASTStmt* parse_continue_stmt();
     ASTStmt* parse_hash_if_stmt();
+    ASTStmt* parse_defer_stmt();
     std::vector<ASTStmt*> parse_block();
 
     // Expressions (Pratt Parser)

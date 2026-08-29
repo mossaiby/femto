@@ -13,9 +13,9 @@ main :: () -> int32 {
     std::c::memset(null_term_pos, 0, 1); // null terminator
 
     std::io::print("   Allocated string: ");
-    std::c::puts(buf); // Output: "AAAAA"
+    std::c::puts(@cast(string8, buf)); // Output: "AAAAA"
 
-    uint64 len = std::c::strlen(buf);
+    uint64 len = std::c::strlen(@cast(string8, buf));
     std::io::print("   String length: ");
     std::io::println_int(len); // Output: 5
 
@@ -25,7 +25,7 @@ main :: () -> int32 {
     int64 user = std::c::getenv("USER");
     if (user != 0) then {
         std::io::print("2. Current USER from libc getenv: ");
-        std::c::puts(user);
+        std::c::puts(@cast(string8, user));
     }
 
     // 4. Calling libc pseudo-random number generator

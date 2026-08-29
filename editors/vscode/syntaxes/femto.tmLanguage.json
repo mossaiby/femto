@@ -126,7 +126,7 @@
       "patterns": [
         {
           "name": "keyword.control.femto",
-          "match": "\\b(if|then|else|while|do|for|switch|case|default|foreach|in|break|continue|return|match)\\b"
+          "match": "\\b(if|then|else|while|do|for|switch|case|default|foreach|in|break|continue|return|match|defer)\\b"
         }
       ]
     },

@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include <string_view>
 #include <vector>
 #include <memory>
@@ -32,7 +33,9 @@ enum class ExprKind {
     Literal, Identifier, Binary, Unary, PostfixUnwrap,
     Cast, LossyCast, Bitcast, Match, Call, MemberAccess,
     Index, SliceSubrange, StructLiteral, ArrayLiteral, Subject,
-    BuiltinSizeof, BuiltinAlignof, BuiltinBitcast, BuiltinCast
+    BuiltinSizeof, BuiltinAlignof, BuiltinBitcast, BuiltinCast,
+    BuiltinTypeof, BuiltinLine, BuiltinFile, BuiltinTarget,
+    BuiltinArch, BuiltinEndian
 };
 
 struct ASTMatchArm {
@@ -55,13 +58,15 @@ struct ASTExpr {
     std::vector<ASTExpr*> args;
     std::vector<std::pair<std::string_view, ASTExpr*>> struct_fields;
     std::vector<ASTMatchArm> match_arms;
+    bool is_repeat_fill = false;
+    uint32_t evaluated_line = 0;
 };
 
 enum class StmtKind {
     VarDecl, ConstDecl, Assignment, CompoundAssignment,
     Increment, Decrement, If, While, DoWhile, For, Switch,
     Foreach, Break, Continue, Return, ResultBranch, ExprStmt,
-    HashIf
+    HashIf, Defer
 };
 
 struct ASTSwitchCase {
@@ -128,6 +133,7 @@ struct ASTFunctionDecl {
     bool is_exported = false;
     bool is_extern_c = false;
     SourceSpan span;
+    std::string file_path;
 };
 
 struct ASTStructField {
@@ -143,6 +149,7 @@ struct ASTStructDecl {
     std::vector<ASTStructField> fields;
     bool is_exported = false;
     SourceSpan span;
+    std::string file_path;
 };
 
 struct ASTUnionField {
@@ -158,6 +165,7 @@ struct ASTUnionDecl {
     std::vector<ASTUnionField> fields;
     bool is_exported = false;
     SourceSpan span;
+    std::string file_path;
 };
 
 struct ASTEnumVariant {
@@ -172,6 +180,7 @@ struct ASTEnumDecl {
     std::vector<ASTEnumVariant> variants;
     bool is_exported = false;
     SourceSpan span;
+    std::string file_path;
 };
 
 struct ASTConstDecl {
@@ -180,6 +189,7 @@ struct ASTConstDecl {
     ASTExpr* init_expr = nullptr;
     bool is_exported = false;
     SourceSpan span;
+    std::string file_path;
 };
 
 struct ASTProgram {

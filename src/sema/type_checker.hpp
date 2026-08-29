@@ -92,6 +92,7 @@ public:
     const std::unordered_map<std::string, double>& float_const_defs() const { return float_const_defs_; }
 
     static std::string get_type_name(const ASTType* ty);
+    static std::string get_type_name(const SemaType* ty);
 
 private:
     Arena& arena_;

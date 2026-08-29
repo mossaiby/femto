@@ -55,7 +55,7 @@ main :: () -> int32 {
     std::io::print("3. [std::fs] Bytes read from file: ");
     std::io::println_int(bytes_read); // 23
     std::io::print("   [std::fs] File content: ");
-    std::io::println(read_buf);
+    std::io::println(@cast(string8, read_buf));
 
     std::c::free(read_buf);
     string_destroy(&msg);

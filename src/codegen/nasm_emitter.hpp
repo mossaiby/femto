@@ -42,6 +42,7 @@ private:
     std::unordered_map<std::string, VarInfo> local_vars_;
     std::vector<LoopContext> loop_stack_;
     std::vector<uint32_t> subject_stack_;
+    std::vector<std::vector<const ASTStmt*>> defer_scopes_;
     uint32_t current_stack_offset_ = 0;
     const ASTProgram* current_program_ = nullptr;
     uint64_t label_seq_ = 0;
@@ -56,6 +57,7 @@ private:
     bool is_float_expr(const ASTExpr* expr);
     bool is_128bit_expr(const ASTExpr* expr);
     bool is_64bit_expr(const ASTExpr* expr);
+    bool is_string_expr(const ASTExpr* expr);
     bool is_slice_expr(const ASTExpr* expr);
     uint64_t get_type_id(const ASTExpr* expr);
     SemaType* get_member_type(const ASTExpr* expr);
@@ -63,6 +65,7 @@ private:
 
     void emit_function(const ASTFunctionDecl* fn);
     void emit_statement(const ASTStmt* stmt, uint32_t& stack_offset);
+    void emit_deferred_statements(uint32_t& stack_offset);
     void emit_expression(const ASTExpr* expr);
     void emit_lvalue_address(const ASTExpr* lval);
 };
