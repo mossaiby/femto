@@ -120,6 +120,7 @@ struct ASTFunctionDecl {
     std::string_view name;
     std::vector<std::string_view> generic_params;
     std::vector<ASTParam> params;
+    bool is_variadic = false;
     ASTType* return_type;
     std::vector<ASTStmt*> body;
     bool is_exported = false;

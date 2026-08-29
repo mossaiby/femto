@@ -97,6 +97,7 @@ Token Lexer::next_token() {
         case ';': return make_tok(TokenKind::Semicolon, 1);
         case ',': return make_tok(TokenKind::Comma, 1);
         case '.': 
+            if (peek() == '.' && peek(1) == '.') { advance(); advance(); return make_tok(TokenKind::DotDotDot, 3); }
             if (peek() == '.') { advance(); return make_tok(TokenKind::DotDot, 2); }
             return make_tok(TokenKind::Dot, 1);
         case '?':

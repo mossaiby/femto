@@ -1,5 +1,8 @@
 extern "C" {
     // stdio.h
+    printf   :: (string8 fmt, ...) -> int32;
+    sprintf  :: (int64 buf, string8 fmt, ...) -> int32;
+    snprintf :: (int64 buf, uint64 size, string8 fmt, ...) -> int32;
     puts     :: (string8 str) -> int32;
     putchar  :: (int32 c) -> int32;
     getchar  :: () -> int32;

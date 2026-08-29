@@ -35,6 +35,9 @@ TEST_CASE(Parser, FunctionDeclarations) {
         "}\n"
         "identity :: <T>(T x) -> T {\n"
         "    return x;\n"
+        "}\n"
+        "extern \"C\" {\n"
+        "    printf :: (string8 fmt, ...) -> int32;\n"
         "}\n";
 
     SourceManager sm("test.femto", src);
@@ -45,11 +48,12 @@ TEST_CASE(Parser, FunctionDeclarations) {
 
     ASTProgram prog = parser.parse_program();
     ASSERT_FALSE(diag.has_errors());
-    ASSERT_EQ(prog.functions.size(), 2u);
+    ASSERT_EQ(prog.functions.size(), 3u);
 
     auto* fn1 = prog.functions[0];
     ASSERT_STREQ(fn1->name, "add");
     ASSERT_TRUE(fn1->is_exported);
+    ASSERT_FALSE(fn1->is_variadic);
     ASSERT_EQ(fn1->params.size(), 2u);
     ASSERT_STREQ(fn1->params[0].name, "a");
     ASSERT_STREQ(fn1->params[1].name, "b");
@@ -59,6 +63,12 @@ TEST_CASE(Parser, FunctionDeclarations) {
     ASSERT_STREQ(fn2->name, "identity");
     ASSERT_EQ(fn2->generic_params.size(), 1u);
     ASSERT_STREQ(fn2->generic_params[0], "T");
+
+    auto* fn3 = prog.functions[2];
+    ASSERT_STREQ(fn3->name, "printf");
+    ASSERT_TRUE(fn3->is_extern_c);
+    ASSERT_TRUE(fn3->is_variadic);
+    ASSERT_EQ(fn3->params.size(), 1u);
 }
 
 TEST_CASE(Parser, StructAndUnionParsing) {

@@ -1,4 +1,9 @@
 import std::builtin;
+import std::c;
+
+extern "C" {
+    printf :: (string8 fmt, ...) -> int32;
+}
 
 #export
 print :: (string8 s) -> void {

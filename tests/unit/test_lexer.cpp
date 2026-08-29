@@ -81,7 +81,7 @@ TEST_CASE(Lexer, StringAndCharLiterals) {
 }
 
 TEST_CASE(Lexer, MultiCharOperators) {
-    std::string src = ":: -> .. ?? += -= *= /= %= ++ -- == != <= >= << >> && ||";
+    std::string src = ":: -> .. ... ?? += -= *= /= %= ++ -- == != <= >= << >> && ||";
     SourceManager sm("test.femto", src);
     Diagnostics diag(sm);
     Lexer lexer(sm, diag);
@@ -89,6 +89,7 @@ TEST_CASE(Lexer, MultiCharOperators) {
     ASSERT_EQ(lexer.next_token().kind, TokenKind::DoubleColon);
     ASSERT_EQ(lexer.next_token().kind, TokenKind::Arrow);
     ASSERT_EQ(lexer.next_token().kind, TokenKind::DotDot);
+    ASSERT_EQ(lexer.next_token().kind, TokenKind::DotDotDot);
     ASSERT_EQ(lexer.next_token().kind, TokenKind::QuestionQuestion);
     ASSERT_EQ(lexer.next_token().kind, TokenKind::PlusEq);
     ASSERT_EQ(lexer.next_token().kind, TokenKind::MinusEq);

@@ -741,6 +741,10 @@ ASTFunctionDecl* Parser::parse_function_decl(std::string_view name, std::vector<
     expect(TokenKind::LParen, "expected '(' for parameter list");
     if (current_.kind != TokenKind::RParen) {
         do {
+            if (match(TokenKind::DotDotDot)) {
+                fn->is_variadic = true;
+                break;
+            }
             ASTParam p;
             p.type = parse_type();
             Token p_name = expect(TokenKind::Identifier, "expected parameter name");

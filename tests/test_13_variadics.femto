@@ -1,0 +1,26 @@
+// ============================================================================
+// FILE: tests/test_13_variadics.femto
+// ============================================================================
+import std::io;
+import std::c;
+
+#export
+main :: () -> int32 {
+    // 1. Variadic call with multiple types (strings, integers, floats)
+    int32 written = std::io::printf("Variadic Test: language=%s, value=%d, float=%.2f, status=%s\n", 
+                                    "Femto", 42, 3.14, "OK");
+
+    // 2. Variadic string formatting into buffer
+    int64 buf = std::c::malloc(64);
+    int32 len = std::c::snprintf(buf, 64, "Formatted [%d, %d, %d]", 10, 20, 30);
+
+    uint64 str_len = std::c::strlen(@cast(string8, buf));
+    std::c::free(buf);
+
+    // "Formatted [10, 20, 30]" has length 22
+    if (written > 0 && len == 22 && str_len == 22) then {
+        std::io::println("[PASS] test_13_variadics");
+        return 0;
+    }
+    return 1;
+}

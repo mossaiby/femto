@@ -30,7 +30,7 @@ enum class TokenKind : uint16_t {
     AtBuiltin,
 
     // Operators & Delimiters
-    DoubleColon, Colon, Semicolon, Comma, Dot, DotDot, Arrow,
+    DoubleColon, Colon, Semicolon, Comma, Dot, DotDot, DotDotDot, Arrow,
     QuestionQuestion, Bang,
     Plus, Minus, Star, Slash, Percent,
     Amp, Pipe, Caret, Tilde,
