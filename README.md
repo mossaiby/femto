@@ -13,7 +13,7 @@ This repository contains the language specification, the standard library, the r
   - [1. Type System](#1-type-system)
   - [2. Literals and Constants](#2-literals-and-constants)
   - [3. Declarations and Mutability](#3-declarations-and-mutability)
-  - [4. Functions](#4-functions)
+  - [4. Functions & Variadics](#4-functions--variadics)
   - [5. Generics](#5-generics)
   - [6. Pointers, Arrays, and Slices](#6-pointers-arrays-and-slices)
   - [7. Structs, Enums, and Unions](#7-structs-enums-and-unions)
@@ -38,6 +38,7 @@ This repository contains the language specification, the standard library, the r
 
 - **No Undefined States:** Mandatory variable initialization; no implicit uninitialized memory reads.
 - **Fixed-Width Primitives:** Strict, platform-independent sizing (`int8`–`int512`, `uint8`–`uint512`, `float16`–`float128`, `uint64` indexing).
+- **Type-Erased Variadics (`any... args`):** First-class polymorphic formatting and variadic functions with `{}` placeholder templates and zero hidden heap allocations.
 - **Zero-Cost Generics:** Monomorphized compile-time generics with zero runtime metadata overhead.
 - **Explicit Type Conversions:** Clear taxonomy distinguishing safe widening conversions, explicit casts (`@cast`), and bit reinterpretation (`@bitcast`).
 - **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with first-class syntactic support (`??`) and zero exception overhead.
@@ -60,6 +61,7 @@ This repository contains the language specification, the standard library, the r
 | **Boolean** | `bool8`, `bool16`, `bool32`, `bool64`, `bool128`, `bool256`, `bool512` | `0` is `false`; non-zero is `true`. Logical ops yield canonical `1`. |
 | **Code Units** | `char8`, `char16`, `char32` | UTF-8, UTF-16, and UTF-32 sized code unit primitives. |
 | **Strings** | `string8`, `string16`, `string32` | Fat-pointer string references: `{ const charN* data, uint64 length }`. |
+| **Type Reflection** | `any` | 16-byte value fat-pointer: `{ int64 data, uint64 type_id }`. |
 | **Unit / Void** | `void` | Return-type marker only. |
 
 *All indexing, lengths, and capacities strictly use `uint64`.*
@@ -94,16 +96,29 @@ PI          :: 3.141592653589793;
 
 ---
 
-### 4. Functions
+### 4. Functions & Variadics
 
 - **Syntax:** `name :: (params) -> ReturnType { body }`
 - **Default Arguments:** Supported on parameters.
-- **Linkage:** Default private to module; `#export` marks symbols global.
+- **Native Variadics (`any... args`):** Allows functions to receive variable numbers of heterogeneous arguments automatically bundled into an `any[]` slice on the caller's stack.
+- **C-FFI Variadics (`...`):** C-style `...` ellipsis is supported strictly within `extern "C"` blocks.
 
 ```c++
 #export
 add :: (int32 a, int32 b = 10) -> int32 {
     return a + b;
+}
+
+// Native variadic function in pure Femto:
+#export
+log_info :: (string8 header, any... args) -> void {
+    std::io::print("[{}] ", header);
+    std::io::println("Received {} extra arguments", args.length());
+}
+
+// C-FFI variadics:
+extern "C" {
+    printf :: (string8 fmt, ...) -> int32;
 }
 ```
 
@@ -178,7 +193,7 @@ DataUnion :: union {
 ```c++
 // if/then/else requires 'then'
 if (x > 0) then {
-    std::io::println("positive");
+    std::io::println("positive: {}", x);
 } else {
     std::io::println("non-positive");
 }
@@ -209,7 +224,7 @@ int32 mapped = match (code) {
 
 // Foreach iteration over Arrays and Slices
 foreach (uint64 idx, int32 val in slice) {
-    std::io::print_int(val);
+    std::io::println("{}: {}", idx, val);
 }
 ```
 
@@ -240,8 +255,8 @@ calculate :: (int32 a, int32 b) -> !int32 {
 main :: () -> int32 {
     // Result branching construct
     calculate(100, 5)
-        ?? (int32 val)  { std::io::print_int(val); }
-        :  (int32 code) { std::io::println("Division error"); return 1; };
+        ?? (int32 val)  { std::io::println("Calculated result: {}", val); }
+        :  (int32 code) { std::io::println("Division error code: {}", code); return 1; };
 
     return 0;
 }
@@ -267,7 +282,7 @@ main :: () -> int32 {
 - C ABI linkage:
   ```c++
   extern "C" {
-      puts   :: (string8 str) -> int32;
+      printf :: (string8 fmt, ...) -> int32;
       malloc :: (uint64 size) -> int64;
       free   :: (int64 ptr) -> void;
   }
@@ -295,7 +310,8 @@ Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
 | `int8`..`int64`, `uint8`..`uint64`, `boolN`, `charN`, `T*` | 1, 2, 4, 8 bytes | `INTEGER` registers (`RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`) |
 | `int128`, `uint128` | 16 bytes (low 64-bit, high 64-bit) | `INTEGER` register pair (`RDI:RSI` or `RAX:RDX`) |
 | `float32`, `float64` | IEEE 754 (4 or 8 bytes) | `SSE` vector registers (`XMM0`–`XMM7`) |
-| Slice `T[]` / `stringN` | `{ T* data, uint64 length }` (16 bytes) | Passed across two `INTEGER` registers |
+| Slice `T[]` / `stringN` / `any[]` | `{ T* data, uint64 length }` (16 bytes) | Passed across two `INTEGER` registers |
+| Type Reflection `any` | `{ int64 data, uint64 type_id }` (16 bytes) | Struct memory / pointer reference |
 | Result `!T` | `{ int32 code, [pad], T value }` (16 bytes) | Register pair (`RAX:RDX`) |
 | Struct / Union | Field offset & padding aligned | Value copy / pointer reference |
 
@@ -325,6 +341,7 @@ Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
                       [ NASM Code Generator ]
                       ├── Dynamic Stack Frame Calculation
                       ├── 16-Byte System V ABI Alignment
+                      ├── Auto-Packed `any...` Slice Lowering
                       └── Sized Instruction Lowering
                                │
                                ▼
@@ -362,10 +379,10 @@ femto/
 ├── stdlib/
 │   └── std/
 │       ├── builtin.femto       # Builtin runtime bindings
-│       ├── c.femto             # Libc C-FFI wrappers
+│       ├── c.femto             # Libc C-FFI wrappers (printf, malloc, open)
 │       ├── collection.femto    # Dynamic Array<T>
 │       ├── fs.femto            # File stream I/O
-│       ├── io.femto            # Console formatting & printing
+│       ├── io.femto            # Native {} formatting & printing (println, print)
 │       ├── math.femto          # Mathematical functions & constants
 │       ├── mem.femto           # Low-level memory utilities
 │       ├── string.femto        # Dynamic growable String builder
@@ -444,7 +461,7 @@ Femto features a unified 3-tier test suite:
 
 1. **Tier 1 (Internal Unit Tests):** Verifies internal compiler components (`Lexer`, `Parser`, `Sema`, `TypeChecker`, `Monomorphizer`, `NasmEmitter`) in isolation.
 2. **Tier 2 (Negative Diagnostic Tests):** Verifies that semantic and syntactic errors (e.g. type mismatches, mutating `const` variables, invalid `break` levels) are rejected with accurate diagnostics.
-3. **Tier 3 (End-to-End Tests):** Compiles and executes comprehensive `.femto` test suites verifying integer math, floats, control flow, pattern matching, structs, unions, pointers, slices, results, generics, metaprogramming, and stdlib modules.
+3. **Tier 3 (End-to-End Tests):** Compiles and executes comprehensive `.femto` test suites verifying integer math, floats, control flow, pattern matching, structs, unions, pointers, slices, results, generics, metaprogramming, C-FFI variadics, native `{}` formatting, and stdlib modules.
 
 ### Running All Tests
 
@@ -467,7 +484,9 @@ cmake --build build --target check
 
    #export
    main :: () -> int32 {
-       std::io::println("Hello, Femto!");
+       int32 apples = 3;
+       string8 person = "Joe";
+       std::io::println("I have {} apples I got from {}", apples, person);
        return 0;
    }
    ```

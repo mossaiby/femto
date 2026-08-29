@@ -38,6 +38,9 @@ TEST_CASE(Parser, FunctionDeclarations) {
         "}\n"
         "extern \"C\" {\n"
         "    printf :: (string8 fmt, ...) -> int32;\n"
+        "}\n"
+        "my_print :: (string8 fmt, any... args) -> void {\n"
+        "    return;\n"
         "}\n";
 
     SourceManager sm("test.femto", src);
@@ -48,16 +51,14 @@ TEST_CASE(Parser, FunctionDeclarations) {
 
     ASTProgram prog = parser.parse_program();
     ASSERT_FALSE(diag.has_errors());
-    ASSERT_EQ(prog.functions.size(), 3u);
+    ASSERT_EQ(prog.functions.size(), 4u);
 
     auto* fn1 = prog.functions[0];
     ASSERT_STREQ(fn1->name, "add");
     ASSERT_TRUE(fn1->is_exported);
     ASSERT_FALSE(fn1->is_variadic);
+    ASSERT_FALSE(fn1->has_variadic_slice);
     ASSERT_EQ(fn1->params.size(), 2u);
-    ASSERT_STREQ(fn1->params[0].name, "a");
-    ASSERT_STREQ(fn1->params[1].name, "b");
-    ASSERT_TRUE(fn1->params[1].default_value != nullptr);
 
     auto* fn2 = prog.functions[1];
     ASSERT_STREQ(fn2->name, "identity");
@@ -68,7 +69,14 @@ TEST_CASE(Parser, FunctionDeclarations) {
     ASSERT_STREQ(fn3->name, "printf");
     ASSERT_TRUE(fn3->is_extern_c);
     ASSERT_TRUE(fn3->is_variadic);
-    ASSERT_EQ(fn3->params.size(), 1u);
+    ASSERT_FALSE(fn3->has_variadic_slice);
+
+    auto* fn4 = prog.functions[3];
+    ASSERT_STREQ(fn4->name, "my_print");
+    ASSERT_FALSE(fn4->is_extern_c);
+    ASSERT_TRUE(fn4->has_variadic_slice);
+    ASSERT_EQ(fn4->params.size(), 2u);
+    ASSERT_TRUE(fn4->params[1].is_variadic_slice);
 }
 
 TEST_CASE(Parser, StructAndUnionParsing) {

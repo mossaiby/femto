@@ -113,6 +113,7 @@ struct ASTParam {
     std::string_view name;
     ASTType* type;
     ASTExpr* default_value;
+    bool is_variadic_slice = false;
     SourceSpan span;
 };
 
@@ -120,7 +121,8 @@ struct ASTFunctionDecl {
     std::string_view name;
     std::vector<std::string_view> generic_params;
     std::vector<ASTParam> params;
-    bool is_variadic = false;
+    bool is_variadic = false;          // C-FFI variadics (...)
+    bool has_variadic_slice = false;   // Native variadics (any... args)
     ASTType* return_type;
     std::vector<ASTStmt*> body;
     bool is_exported = false;

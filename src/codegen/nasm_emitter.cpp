@@ -58,6 +58,29 @@ static std::string sanitize_nasm_identifier(std::string_view name) {
     return s;
 }
 
+uint64_t NasmEmitter::get_type_id(const ASTExpr* expr) {
+    if (!expr) return 4;
+    if (expr->kind == ExprKind::Literal) {
+        if (expr->raw_text == "true" || expr->raw_text == "false") return 13; // TYPE_BOOL
+        if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`') return 17; // TYPE_STRING
+        if (expr->raw_text.front() == '\'') return 14; // TYPE_CHAR
+        if (expr->raw_text == "null") return 18; // TYPE_POINTER
+    }
+    if (is_float_expr(expr)) return 12; // TYPE_FLOAT64
+    if (is_128bit_expr(expr)) return 5; // TYPE_INT128
+    auto* ty = get_expr_type(expr);
+    if (ty) {
+        if (ty->kind == SemaType::Kind::Pointer) return 18;
+        if (ty->is_primitive(TokenKind::KwString8) || ty->is_primitive(TokenKind::KwString16) || ty->is_primitive(TokenKind::KwString32)) return 17;
+        if (ty->is_primitive(TokenKind::KwBool8) || ty->is_primitive(TokenKind::KwBool16) || ty->is_primitive(TokenKind::KwBool32) || ty->is_primitive(TokenKind::KwBool64)) return 13;
+        if (ty->is_primitive(TokenKind::KwChar8) || ty->is_primitive(TokenKind::KwChar16) || ty->is_primitive(TokenKind::KwChar32)) return 14;
+        if (ty->is_primitive(TokenKind::KwFloat32)) return 11;
+        if (ty->is_primitive(TokenKind::KwFloat64)) return 12;
+        if (ty->is_integer()) return 4;
+    }
+    return 4; // default INT64
+}
+
 uint32_t NasmEmitter::calculate_function_stack_size(const ASTFunctionDecl* fn) {
     uint32_t current_offset = 0;
 
@@ -67,7 +90,7 @@ uint32_t NasmEmitter::calculate_function_stack_size(const ASTFunctionDecl* fn) {
             auto it = type_env_.find("int32");
             p_ty = it != type_env_.end() ? it->second : nullptr;
         }
-        if (p_ty && (p_ty->is_128bit() || p_ty->kind == SemaType::Kind::Slice)) {
+        if (param.is_variadic_slice || (p_ty && (p_ty->is_128bit() || p_ty->kind == SemaType::Kind::Slice))) {
             current_offset += 16;
         } else {
             current_offset += 8;
@@ -91,6 +114,22 @@ uint32_t NasmEmitter::calculate_function_stack_size(const ASTFunctionDecl* fn) {
                 scan_expr(arm.result_expr, off);
             }
             return;
+        }
+        if (expr->kind == ExprKind::Call && current_program_) {
+            if (expr->left && expr->left->kind == ExprKind::Identifier) {
+                std::string callee = std::string(expr->left->raw_text);
+                for (const auto* f : current_program_->functions) {
+                    if ((f->name == callee || f->name.ends_with("::" + callee)) && f->has_variadic_slice) {
+                        size_t fixed_count = f->params.size() - 1;
+                        if (expr->args.size() >= fixed_count) {
+                            size_t var_count = expr->args.size() - fixed_count;
+                            off += (uint32_t)(var_count * 16 + 16);
+                            max_offset = std::max(max_offset, off);
+                        }
+                        break;
+                    }
+                }
+            }
         }
         scan_expr(expr->left, off);
         scan_expr(expr->right, off);
@@ -246,10 +285,12 @@ SemaType* NasmEmitter::get_expr_type(const ASTExpr* expr) {
 bool NasmEmitter::is_float_expr(const ASTExpr* expr) {
     if (!expr) return false;
     if (expr->kind == ExprKind::Literal) {
+        if (expr->raw_text == "null" || expr->raw_text == "true" || expr->raw_text == "false") {
+            return false;
+        }
         if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`' || expr->raw_text.front() == '\'') {
             return false;
         }
-        if (expr->raw_text == "null") return false;
         return (expr->raw_text.find('.') != std::string_view::npos ||
                 expr->raw_text.find('e') != std::string_view::npos ||
                 expr->raw_text.find('E') != std::string_view::npos);
@@ -403,6 +444,10 @@ SemaType* NasmEmitter::resolve_type_node(ASTType* ast_ty) {
                 return ty;
             }
         }
+        if (ast_ty->primitive_kind == TokenKind::KwAny) {
+            auto it = type_env_.find("any");
+            return it != type_env_.end() ? it->second : nullptr;
+        }
     }
     if (ast_ty->kind == TypeKind::Custom) {
         std::string name = std::string(ast_ty->custom_name);
@@ -495,7 +540,16 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
             p_ty = it != type_env_.end() ? it->second : nullptr;
         }
 
-        if (p_ty && p_ty->is_floating_point()) {
+        if (fn->params[i].is_variadic_slice || (p_ty && (p_ty->is_128bit() || p_ty->kind == SemaType::Kind::Slice))) {
+            stack_off += 16;
+            VarInfo vi{ stack_off, p_ty };
+            local_vars_[std::string(fn->params[i].name)] = vi;
+            if (int_idx + 1 < 6) {
+                text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs[int_idx] << "\n";
+                text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], " << int_arg_regs[int_idx + 1] << "\n";
+                int_idx += 2;
+            }
+        } else if (p_ty && p_ty->is_floating_point()) {
             stack_off += 8;
             VarInfo vi{ stack_off, p_ty };
             local_vars_[std::string(fn->params[i].name)] = vi;
@@ -505,15 +559,6 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
                 } else {
                     text_sec_ << "    movsd [rbp - " << stack_off << "], xmm" << flt_idx++ << "\n";
                 }
-            }
-        } else if (p_ty && (p_ty->is_128bit() || p_ty->kind == SemaType::Kind::Slice)) {
-            stack_off += 16;
-            VarInfo vi{ stack_off, p_ty };
-            local_vars_[std::string(fn->params[i].name)] = vi;
-            if (int_idx + 1 < 6) {
-                text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs[int_idx] << "\n";
-                text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], " << int_arg_regs[int_idx + 1] << "\n";
-                int_idx += 2;
             }
         } else {
             stack_off += 8;
@@ -988,7 +1033,6 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
             text_sec_ << "    movsxd rax, eax\n";
             text_sec_ << "    shl rax, 2\n";
             text_sec_ << "    add rbx, rax\n";
-            text_sec_ << "    mov eax, [rbp - " << loop_i_off << "]\n";
             text_sec_ << "    mov eax, [rbx]\n";
             text_sec_ << "    mov [rbp - " << iter_var_off << "], eax\n";
 
@@ -1067,6 +1111,10 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
         case ExprKind::Literal: {
             if (expr->raw_text == "null") {
                 text_sec_ << "    xor eax, eax\n";
+            } else if (expr->raw_text == "true") {
+                text_sec_ << "    mov eax, 1\n";
+            } else if (expr->raw_text == "false") {
+                text_sec_ << "    xor eax, eax\n";
             } else if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`') {
                 std::string str_lbl = next_label("L_str");
                 std::string raw = std::string(expr->raw_text.substr(1, expr->raw_text.size() - 2));
@@ -1090,10 +1138,6 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 for (char c : expr->raw_text) if (c != '_') clean.push_back(c);
                 rodata_sec_ << flt_lbl << ": dq " << clean << "\n";
                 text_sec_ << "    movsd xmm0, [rel " << flt_lbl << "]\n";
-            } else if (expr->raw_text == "true") {
-                text_sec_ << "    mov eax, 1\n";
-            } else if (expr->raw_text == "false") {
-                text_sec_ << "    xor eax, eax\n";
             } else if (expr->raw_text.front() == '\'') {
                 int64_t c_val = parse_literal_int_emitter(expr->raw_text);
                 text_sec_ << "    mov eax, " << c_val << "\n";
@@ -1497,6 +1541,88 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             break;
         }
         case ExprKind::Call: {
+            const ASTFunctionDecl* target_fn = nullptr;
+            std::string callee;
+            if (expr->left && expr->left->kind == ExprKind::Identifier) {
+                callee = std::string(expr->left->raw_text);
+                if (!expr->generic_args.empty() && callee.find("__") == std::string::npos) {
+                    for (auto* a : expr->generic_args) {
+                        callee += "__" + TypeChecker::get_type_name(a);
+                    }
+                }
+                if (current_program_) {
+                    for (const auto* f : current_program_->functions) {
+                        if (f->name == callee || f->name.ends_with("::" + callee)) {
+                            target_fn = f;
+                            if (f->is_extern_c) {
+                                std::string fn_n = std::string(f->name);
+                                auto last_colons = fn_n.rfind("::");
+                                callee = (last_colons != std::string::npos) ? fn_n.substr(last_colons + 2) : fn_n;
+                            } else {
+                                callee = std::string(f->name);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Check if calling native variadic slice function (any... args)
+            if (target_fn && target_fn->has_variadic_slice && !target_fn->is_extern_c) {
+                size_t fixed_count = target_fn->params.size() - 1;
+                size_t var_count = expr->args.size() >= fixed_count ? expr->args.size() - fixed_count : 0;
+
+                // Allocate stack space for Any array
+                uint32_t any_arr_off = current_stack_offset_ + (uint32_t)(var_count * 16 + 16);
+                any_arr_off = (any_arr_off + 15) & ~15;
+
+                for (size_t j = 0; j < var_count; ++j) {
+                    const auto* varg = expr->args[fixed_count + j];
+                    uint64_t tid = get_type_id(varg);
+                    emit_expression(varg);
+                    if (is_float_expr(varg)) {
+                        text_sec_ << "    movq rax, xmm0\n";
+                    }
+                    uint32_t elem_off = any_arr_off - (uint32_t)(j * 16);
+                    text_sec_ << "    mov [rbp - " << elem_off << "], rax\n";
+                    text_sec_ << "    mov qword [rbp - " << (elem_off - 8) << "], " << tid << "\n";
+                }
+
+                const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+                size_t cur_int = 0;
+
+                for (size_t i = 0; i < fixed_count; ++i) {
+                    emit_expression(expr->args[i]);
+                    if (cur_int < 6) {
+                        text_sec_ << "    mov " << int_arg_regs[cur_int++] << ", rax\n";
+                    }
+                }
+
+                // Pass the Any[] slice as last 2 integer registers: ptr and length
+                if (cur_int + 1 < 6) {
+                    if (var_count > 0) {
+                        text_sec_ << "    lea " << int_arg_regs[cur_int++] << ", [rbp - " << any_arr_off << "]\n";
+                    } else {
+                        text_sec_ << "    xor " << int_arg_regs[cur_int++] << ", " << int_arg_regs[cur_int] << "\n";
+                    }
+                    text_sec_ << "    mov " << int_arg_regs[cur_int++] << ", " << var_count << "\n";
+                }
+
+                std::string call_lbl_aligned = next_label("L_call_aligned");
+                std::string call_lbl_done    = next_label("L_call_done");
+
+                text_sec_ << "    test rsp, 15\n";
+                text_sec_ << "    jz " << call_lbl_aligned << "\n";
+                text_sec_ << "    sub rsp, 8\n";
+                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                text_sec_ << "    add rsp, 8\n";
+                text_sec_ << "    jmp " << call_lbl_done << "\n";
+                text_sec_ << call_lbl_aligned << ":\n";
+                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                text_sec_ << call_lbl_done << ":\n";
+                return;
+            }
+
             const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
             
             std::vector<bool> is_float_arg;
@@ -1562,59 +1688,18 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 text_sec_ << "    mov al, " << std::min(flt_count, 8) << "\n";
             }
 
-            if (expr->left && expr->left->kind == ExprKind::Identifier) {
-                std::string callee = std::string(expr->left->raw_text);
-                if (!expr->generic_args.empty() && callee.find("__") == std::string::npos) {
-                    for (auto* a : expr->generic_args) {
-                        callee += "__" + TypeChecker::get_type_name(a);
-                    }
-                }
+            std::string call_lbl_aligned = next_label("L_call_aligned");
+            std::string call_lbl_done    = next_label("L_call_done");
 
-                if (current_program_) {
-                    bool found = false;
-                    for (const auto* fn : current_program_->functions) {
-                        if (fn->name == callee) {
-                            if (fn->is_extern_c) {
-                                std::string fn_n = std::string(fn->name);
-                                auto last_colons = fn_n.rfind("::");
-                                callee = (last_colons != std::string::npos) ? fn_n.substr(last_colons + 2) : fn_n;
-                            } else {
-                                callee = std::string(fn->name);
-                            }
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found) {
-                        for (const auto* fn : current_program_->functions) {
-                            std::string fn_n = std::string(fn->name);
-                            if (fn->is_extern_c && (callee == fn_n || callee.ends_with("::" + fn_n))) {
-                                auto last_colons = fn_n.rfind("::");
-                                callee = (last_colons != std::string::npos) ? fn_n.substr(last_colons + 2) : fn_n;
-                                break;
-                            }
-                            if (!fn->is_extern_c && fn_n.ends_with("::" + callee)) {
-                                callee = fn_n;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                std::string call_lbl_aligned = next_label("L_call_aligned");
-                std::string call_lbl_done    = next_label("L_call_done");
-
-                text_sec_ << "    test rsp, 15\n";
-                text_sec_ << "    jz " << call_lbl_aligned << "\n";
-                text_sec_ << "    sub rsp, 8\n";
-                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-                text_sec_ << "    add rsp, 8\n";
-                text_sec_ << "    jmp " << call_lbl_done << "\n";
-                text_sec_ << call_lbl_aligned << ":\n";
-                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-                text_sec_ << call_lbl_done << ":\n";
-            }
+            text_sec_ << "    test rsp, 15\n";
+            text_sec_ << "    jz " << call_lbl_aligned << "\n";
+            text_sec_ << "    sub rsp, 8\n";
+            text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+            text_sec_ << "    add rsp, 8\n";
+            text_sec_ << "    jmp " << call_lbl_done << "\n";
+            text_sec_ << call_lbl_aligned << ":\n";
+            text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+            text_sec_ << call_lbl_done << ":\n";
             break;
         }
         default: break;

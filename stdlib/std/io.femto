@@ -5,13 +5,73 @@ extern "C" {
     printf :: (string8 fmt, ...) -> int32;
 }
 
+Any :: struct {
+    int64  data = 0;
+    uint64 type_id = 0;
+}
+
 #export
-print :: (string8 s) -> void {
+print_any :: (Any a) -> void {
+    if (a.type_id == 17) then {
+        // string8
+        __builtin_print_str(@cast(string8, a.data));
+    } else if (a.type_id == 12 || a.type_id == 11) then {
+        // float64 / float32
+        __builtin_print_float(@bitcast(float64, a.data));
+    } else if (a.type_id == 13) then {
+        // bool
+        if (a.data != 0) then {
+            __builtin_print_str("true");
+        } else {
+            __builtin_print_str("false");
+        }
+    } else if (a.type_id == 14) then {
+        // char8
+        __builtin_print_char(@cast(int32, a.data));
+    } else {
+        // integer types / pointers
+        __builtin_print_int(a.data);
+    }
+}
+
+#export
+print :: (string8 fmt, any... args) -> void {
+    uint64 arg_idx = 0;
+    uint64 num_args = args.length();
+    int32 i = 0;
+    while (fmt[i] != 0) {
+        // Check for "{}" (ASCII 123 '{' and 125 '}')
+        if (fmt[i] == 123 && fmt[i + 1] == 125) then {
+            if (arg_idx < num_args) then {
+                print_any(args[arg_idx]);
+                arg_idx++;
+            }
+            i += 2; // skip "{}"
+        } else {
+            __builtin_print_char(@cast(int32, fmt[i]));
+            i++;
+        }
+    }
+}
+
+#export
+println :: (string8 fmt, any... args) -> void {
+    print(fmt, args);
+    __builtin_print_nl();
+}
+
+#export
+println_empty :: () -> void {
+    __builtin_print_nl();
+}
+
+#export
+print_str :: (string8 s) -> void {
     __builtin_print_str(s);
 }
 
 #export
-println :: (string8 s) -> void {
+println_str :: (string8 s) -> void {
     __builtin_print_str(s);
     __builtin_print_nl();
 }
@@ -46,11 +106,6 @@ print_float :: (float64 val) -> void {
 #export
 println_float :: (float64 val) -> void {
     __builtin_print_float(val);
-    __builtin_print_nl();
-}
-
-#export
-println_empty :: () -> void {
     __builtin_print_nl();
 }
 

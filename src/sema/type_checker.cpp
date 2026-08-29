@@ -8,6 +8,10 @@ static bool types_are_equal_or_compatible(const SemaType* expected, const SemaTy
     if (!expected || !actual) return true;
     if (expected == actual) return true;
 
+    auto any_it = type_env.find("any");
+    auto* any_t = any_it != type_env.end() ? any_it->second : nullptr;
+    if (expected == any_t) return true;
+
     if (expected->is_integer() && actual->is_integer()) {
         return true;
     }
@@ -64,6 +68,7 @@ std::string TypeChecker::get_type_name(const ASTType* ty) {
     if (!ty) return "int32";
     if (ty->kind == TypeKind::Primitive) {
         switch (ty->primitive_kind) {
+            case TokenKind::KwAny: return "any";
             case TokenKind::KwInt8: return "int8";
             case TokenKind::KwInt16: return "int16";
             case TokenKind::KwInt32: return "int32";
@@ -136,6 +141,19 @@ void TypeChecker::init_primitives() {
     type_env_["string16"] = make_prim(TokenKind::KwString16, 8);
     type_env_["string32"] = make_prim(TokenKind::KwString32, 8);
     type_env_["void"]     = make_prim(TokenKind::KwVoid, 0);
+
+    // Built-in 'any' struct layout: { int64 data; uint64 type_id; }
+    StructTypeInfo any_info;
+    any_info.name = "Any";
+    any_info.fields = {
+        StructFieldInfo{"data", type_env_["int64"], 0},
+        StructFieldInfo{"type_id", type_env_["uint64"], 8}
+    };
+    any_info.field_map["data"] = 0;
+    any_info.field_map["type_id"] = 1;
+    auto* any_type = new SemaType{SemaType::Kind::Struct, 16, 8, any_info};
+    type_env_["any"] = any_type;
+    type_env_["Any"] = any_type;
 }
 
 void TypeChecker::compute_struct_layout(ASTStructDecl* decl, std::string custom_name) {
@@ -463,6 +481,9 @@ SemaType* TypeChecker::resolve_ast_type(ASTType* ast_ty) {
                 return ty;
             }
         }
+        if (ast_ty->primitive_kind == TokenKind::KwAny) {
+            return type_env_["any"];
+        }
     }
     if (ast_ty->kind == TypeKind::Custom) {
         if (!ast_ty->generic_args.empty()) {
@@ -661,6 +682,9 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
         case ExprKind::Literal: {
             if (expr->raw_text == "null") {
                 return new SemaType{SemaType::Kind::Pointer, 8, 8, PointerTypeInfo{type_env_["void"]}};
+            }
+            if (expr->raw_text == "true" || expr->raw_text == "false") {
+                return type_env_["bool8"];
             }
             if (expr->raw_text.front() == '"' || expr->raw_text.front() == '`') {
                 return type_env_["string8"];
@@ -868,9 +892,11 @@ bool TypeChecker::check_program(ASTProgram& prog) {
             if (c_ty && c_ty->is_floating_point()) {
                 double fval = 0.0;
                 if (c->init_expr->kind == ExprKind::Literal) {
-                    std::string clean;
-                    for (char ch : c->init_expr->raw_text) if (ch != '_') clean.push_back(ch);
-                    fval = std::stod(clean);
+                    if (c->init_expr->raw_text != "true" && c->init_expr->raw_text != "false") {
+                        std::string clean;
+                        for (char ch : c->init_expr->raw_text) if (ch != '_') clean.push_back(ch);
+                        fval = std::stod(clean);
+                    }
                 }
                 float_const_defs_[std::string(c->name)] = fval;
             } else {
@@ -914,7 +940,13 @@ bool TypeChecker::check_program(ASTProgram& prog) {
             symbol_table_.clear();
             current_loop_depth_ = 0;
             for (auto& p : fn->params) {
-                symbol_table_[std::string(p.name)] = SymbolInfo{ resolve_ast_type(p.type), false };
+                if (p.is_variadic_slice) {
+                    auto* elem = resolve_ast_type(p.type);
+                    auto* slice_t = new SemaType{SemaType::Kind::Slice, 16, 8, SliceTypeInfo{elem}};
+                    symbol_table_[std::string(p.name)] = SymbolInfo{ slice_t, false };
+                } else {
+                    symbol_table_[std::string(p.name)] = SymbolInfo{ resolve_ast_type(p.type), false };
+                }
             }
             auto* ret_type = resolve_ast_type(fn->return_type);
             for (auto* stmt : fn->body) {

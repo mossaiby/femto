@@ -1,0 +1,23 @@
+// ============================================================================
+// FILE: tests/test_14_native_formatting.femto
+// ============================================================================
+import std::io;
+
+#export
+custom_logger :: (string8 header, any... args) -> void {
+    std::io::print("[{}] ", header);
+    std::io::println("Received {} arguments", args.length());
+}
+
+#export
+main :: () -> int32 {
+    // 1. Test native std::io::println with mixed types (int, string, float, bool)
+    std::io::println("I have {} apples I got from {}", 3, "Joe");
+    std::io::println("Values: int={}, float={}, flag={}", 100, 3.14, true);
+
+    // 2. Test user-defined function taking any...
+    custom_logger("INFO", "User logged in", 101, true);
+
+    std::io::println("[PASS] test_14_native_formatting");
+    return 0;
+}

@@ -152,7 +152,14 @@ ASTType* Parser::parse_type() {
 
     ASTType* base_ty = nullptr;
 
-    if (current_.kind >= TokenKind::KwInt8 && current_.kind <= TokenKind::KwString32) {
+    if (current_.kind == TokenKind::KwAny) {
+        Token t = current_;
+        advance();
+        base_ty = arena_.allocate<ASTType>();
+        base_ty->kind = TypeKind::Primitive;
+        base_ty->primitive_kind = TokenKind::KwAny;
+        base_ty->span = t.span;
+    } else if (current_.kind >= TokenKind::KwInt8 && current_.kind <= TokenKind::KwString32) {
         Token t = current_;
         advance();
         base_ty = arena_.allocate<ASTType>();
@@ -742,17 +749,27 @@ ASTFunctionDecl* Parser::parse_function_decl(std::string_view name, std::vector<
     if (current_.kind != TokenKind::RParen) {
         do {
             if (match(TokenKind::DotDotDot)) {
+                if (!is_extern_c) {
+                    diag_.report_error(current_.span, "'...' variadics are only allowed in extern \"C\" declarations. Use 'any... name' for native variadics.");
+                }
                 fn->is_variadic = true;
                 break;
             }
             ASTParam p;
             p.type = parse_type();
+            if (match(TokenKind::DotDotDot)) {
+                p.is_variadic_slice = true;
+                fn->has_variadic_slice = true;
+            }
             Token p_name = expect(TokenKind::Identifier, "expected parameter name");
             p.name = p_name.text;
             if (match(TokenKind::Eq)) {
                 p.default_value = parse_expression();
             }
             fn->params.push_back(p);
+            if (p.is_variadic_slice) {
+                break;
+            }
         } while (match(TokenKind::Comma));
     }
     expect(TokenKind::RParen, "expected ')'");
@@ -899,13 +916,13 @@ ASTStmt* Parser::parse_statement() {
         return stmt;
     }
 
-    if (current_.kind >= TokenKind::KwInt8 && current_.kind <= TokenKind::KwString32) {
+    if (current_.kind == TokenKind::KwAny || (current_.kind >= TokenKind::KwInt8 && current_.kind <= TokenKind::KwString32)) {
         ASTType* ty = parse_type();
         return parse_var_decl_stmt(ty);
     }
 
     if (current_.kind == TokenKind::Bang) {
-        if ((peek_token_.kind >= TokenKind::KwInt8 && peek_token_.kind <= TokenKind::KwString32) ||
+        if (peek_token_.kind == TokenKind::KwAny || (peek_token_.kind >= TokenKind::KwInt8 && peek_token_.kind <= TokenKind::KwString32) ||
             peek_token_.kind == TokenKind::KwVoid) {
             ASTType* ty = parse_type();
             return parse_var_decl_stmt(ty);
@@ -1084,7 +1101,7 @@ ASTStmt* Parser::parse_for_stmt() {
             ASTType* ty = parse_type();
             s->init_stmt = parse_var_decl_stmt(ty);
             s->init_stmt->is_const = true;
-        } else if (current_.kind >= TokenKind::KwInt8 && current_.kind <= TokenKind::KwString32) {
+        } else if (current_.kind == TokenKind::KwAny || (current_.kind >= TokenKind::KwInt8 && current_.kind <= TokenKind::KwString32)) {
             ASTType* ty = parse_type();
             s->init_stmt = parse_var_decl_stmt(ty);
         } else if (current_.kind == TokenKind::Identifier && 

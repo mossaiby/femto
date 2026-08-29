@@ -15,7 +15,7 @@ enum class TokenKind : uint16_t {
     KwImport, KwFor, KwWhile, KwDo, KwIf, KwThen, KwElse, KwSwitch, KwCase,
     KwMatch, KwReturn, KwBreak, KwContinue, KwEnum, KwStruct, KwNull, KwExtern,
     KwForeach, KwArray, KwNamespace, KwSuccess, KwFailure, KwTrue, KwFalse,
-    KwVoid, KwIn, KwDefault, KwConst, KwUnion,
+    KwVoid, KwIn, KwDefault, KwConst, KwUnion, KwAny,
     
     // Type Keywords
     KwInt8, KwInt16, KwInt32, KwInt64, KwInt128, KwInt256, KwInt512,

@@ -57,6 +57,7 @@ private:
     bool is_128bit_expr(const ASTExpr* expr);
     bool is_64bit_expr(const ASTExpr* expr);
     bool is_slice_expr(const ASTExpr* expr);
+    uint64_t get_type_id(const ASTExpr* expr);
     SemaType* get_member_type(const ASTExpr* expr);
     SemaType* get_expr_type(const ASTExpr* expr);
 

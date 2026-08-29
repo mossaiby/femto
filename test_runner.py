@@ -61,7 +61,7 @@ def main():
     # -------------------------------------------------------------------------
     if unit_test_bin:
         print(f"{BOLD}{MAGENTA}>>> Running Tier 1: C++ Compiler Internal Unit Tests{RESET}")
-        unit_res = subprocess.run([str(unit_test_bin)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        unit_res = subprocess.run([str(unit_test_bin)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
         print(unit_res.stdout.strip())
         if unit_res.returncode == 0:
             total_passed += 1
@@ -86,7 +86,7 @@ def main():
                 "-o", str(out_temp),
                 "--stdlib", str(stdlib_dir)
             ]
-            comp_res = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            comp_res = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
             elapsed = (time.perf_counter() - start_t) * 1000
 
             if comp_res.returncode != 0:
@@ -119,7 +119,7 @@ def main():
             "--stdlib", str(stdlib_dir)
         ]
         
-        comp_res = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        comp_res = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
         if comp_res.returncode != 0:
             elapsed = (time.perf_counter() - start_t) * 1000
             print(f"{RED}{BOLD}FAILED (Compilation){RESET} {GRAY}({elapsed:.1f}ms){RESET}")
@@ -128,7 +128,7 @@ def main():
             continue
 
         try:
-            exec_res = subprocess.run([str(out_bin)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+            exec_res = subprocess.run([str(out_bin)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", timeout=5)
             elapsed = (time.perf_counter() - start_t) * 1000
 
             if exec_res.returncode == 0:
