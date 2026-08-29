@@ -236,6 +236,9 @@ uint32_t NasmEmitter::calculate_function_stack_size(const ASTFunctionDecl* fn) {
     }
 
     uint32_t total = max_offset + 128;
+    if (target_os_ == TargetOS::Windows) {
+        total += 32; // 32-byte shadow space for Windows
+    }
     total = (total + 15) & ~15;
     return std::max(total, 64u);
 }
@@ -509,7 +512,6 @@ std::string NasmEmitter::generate_assembly(const ASTProgram& program) {
     data_sec_   << "section .data\n";
 
     std::unordered_set<std::string> extern_declared;
-    // Always declare strcmp for string comparisons
     extern_declared.insert("strcmp");
     text_sec_ << "extern strcmp\n";
 
@@ -553,9 +555,14 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
     text_sec_ << fn_lbl << ":\n";
     text_sec_ << "    push rbp\n";
     text_sec_ << "    mov rbp, rsp\n";
+    if (target_os_ == TargetOS::Windows) {
+        text_sec_ << "    push rsi\n    push rdi\n";
+    }
     text_sec_ << "    sub rsp, " << frame_size << "\n";
 
-    const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+    const char* int_arg_regs_sysv[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+    const char* int_arg_regs_ms64[] = { "rcx", "rdx", "r8", "r9" };
+
     size_t int_idx = 0;
     size_t flt_idx = 0;
     uint32_t stack_off = 0;
@@ -567,32 +574,61 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
             p_ty = it != type_env_.end() ? it->second : nullptr;
         }
 
-        if (fn->params[i].is_variadic_slice || (p_ty && (p_ty->is_128bit() || p_ty->kind == SemaType::Kind::Slice))) {
-            stack_off += 16;
-            VarInfo vi{ stack_off, p_ty };
-            local_vars_[std::string(fn->params[i].name)] = vi;
-            if (int_idx + 1 < 6) {
-                text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs[int_idx] << "\n";
-                text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], " << int_arg_regs[int_idx + 1] << "\n";
-                int_idx += 2;
-            }
-        } else if (p_ty && p_ty->is_floating_point()) {
-            stack_off += 8;
-            VarInfo vi{ stack_off, p_ty };
-            local_vars_[std::string(fn->params[i].name)] = vi;
-            if (flt_idx < 8) {
-                if (p_ty->size_bytes == 4) {
-                    text_sec_ << "    movss [rbp - " << stack_off << "], xmm" << flt_idx++ << "\n";
-                } else {
-                    text_sec_ << "    movsd [rbp - " << stack_off << "], xmm" << flt_idx++ << "\n";
+        if (target_os_ == TargetOS::Windows) {
+            // Windows x64 ABI parameter loading
+            if (fn->params[i].is_variadic_slice || (p_ty && (p_ty->is_128bit() || p_ty->kind == SemaType::Kind::Slice))) {
+                stack_off += 16;
+                VarInfo vi{ stack_off, p_ty };
+                local_vars_[std::string(fn->params[i].name)] = vi;
+                if (int_idx + 1 < 4) {
+                    text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs_ms64[int_idx] << "\n";
+                    text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], " << int_arg_regs_ms64[int_idx + 1] << "\n";
+                    int_idx += 2;
+                }
+            } else if (p_ty && p_ty->is_floating_point()) {
+                stack_off += 8;
+                VarInfo vi{ stack_off, p_ty };
+                local_vars_[std::string(fn->params[i].name)] = vi;
+                if (flt_idx < 4) {
+                    if (p_ty->size_bytes == 4) text_sec_ << "    movss [rbp - " << stack_off << "], xmm" << flt_idx << "\n";
+                    else text_sec_ << "    movsd [rbp - " << stack_off << "], xmm" << flt_idx << "\n";
+                    flt_idx++;
+                    int_idx++;
+                }
+            } else {
+                stack_off += 8;
+                VarInfo vi{ stack_off, p_ty };
+                local_vars_[std::string(fn->params[i].name)] = vi;
+                if (int_idx < 4) {
+                    text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs_ms64[int_idx++] << "\n";
                 }
             }
         } else {
-            stack_off += 8;
-            VarInfo vi{ stack_off, p_ty };
-            local_vars_[std::string(fn->params[i].name)] = vi;
-            if (int_idx < 6) {
-                text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs[int_idx++] << "\n";
+            // System V (Linux) parameter loading
+            if (fn->params[i].is_variadic_slice || (p_ty && (p_ty->is_128bit() || p_ty->kind == SemaType::Kind::Slice))) {
+                stack_off += 16;
+                VarInfo vi{ stack_off, p_ty };
+                local_vars_[std::string(fn->params[i].name)] = vi;
+                if (int_idx + 1 < 6) {
+                    text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs_sysv[int_idx] << "\n";
+                    text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], " << int_arg_regs_sysv[int_idx + 1] << "\n";
+                    int_idx += 2;
+                }
+            } else if (p_ty && p_ty->is_floating_point()) {
+                stack_off += 8;
+                VarInfo vi{ stack_off, p_ty };
+                local_vars_[std::string(fn->params[i].name)] = vi;
+                if (flt_idx < 8) {
+                    if (p_ty->size_bytes == 4) text_sec_ << "    movss [rbp - " << stack_off << "], xmm" << flt_idx++ << "\n";
+                    else text_sec_ << "    movsd [rbp - " << stack_off << "], xmm" << flt_idx++ << "\n";
+                }
+            } else {
+                stack_off += 8;
+                VarInfo vi{ stack_off, p_ty };
+                local_vars_[std::string(fn->params[i].name)] = vi;
+                if (int_idx < 6) {
+                    text_sec_ << "    mov [rbp - " << stack_off << "], " << int_arg_regs_sysv[int_idx++] << "\n";
+                }
             }
         }
     }
@@ -606,9 +642,17 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
 
     emit_deferred_statements(stack_off);
 
-    text_sec_ << "    mov rsp, rbp\n";
-    text_sec_ << "    pop rbp\n";
-    text_sec_ << "    ret\n\n";
+    if (target_os_ == TargetOS::Windows) {
+        text_sec_ << "    add rsp, " << frame_size << "\n";
+        text_sec_ << "    pop rdi\n    pop rsi\n";
+        text_sec_ << "    mov rsp, rbp\n";
+        text_sec_ << "    pop rbp\n";
+        text_sec_ << "    ret\n\n";
+    } else {
+        text_sec_ << "    mov rsp, rbp\n";
+        text_sec_ << "    pop rbp\n";
+        text_sec_ << "    ret\n\n";
+    }
 }
 
 void NasmEmitter::emit_deferred_statements(uint32_t& stack_offset) {
@@ -1155,7 +1199,14 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
                 emit_deferred_statements(stack_offset);
                 text_sec_ << "    movsd xmm0, [rsp]\n    add rsp, 8\n    pop rax\n    pop rdx\n";
             }
-            text_sec_ << "    mov rsp, rbp\n    pop rbp\n    ret\n";
+            if (target_os_ == TargetOS::Windows) {
+                uint32_t frame_size = calculate_function_stack_size(current_program_->functions[0]);
+                text_sec_ << "    add rsp, " << frame_size << "\n";
+                text_sec_ << "    pop rdi\n    pop rsi\n";
+                text_sec_ << "    mov rsp, rbp\n    pop rbp\n    ret\n";
+            } else {
+                text_sec_ << "    mov rsp, rbp\n    pop rbp\n    ret\n";
+            }
             break;
         }
         case StmtKind::ExprStmt: {
@@ -1536,9 +1587,15 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
 
             // String equality comparisons
             if ((expr->op == "==" || expr->op == "!=") && (is_string_expr(expr->left) || is_string_expr(expr->right))) {
-                emit_expression(expr->left);  text_sec_ << "    push rax\n";
-                emit_expression(expr->right); text_sec_ << "    mov rsi, rax\n    pop rdi\n";
-                text_sec_ << "    call strcmp\n";
+                if (target_os_ == TargetOS::Windows) {
+                    emit_expression(expr->left);  text_sec_ << "    push rax\n";
+                    emit_expression(expr->right); text_sec_ << "    mov rdx, rax\n    pop rcx\n";
+                    text_sec_ << "    sub rsp, 32\n    call strcmp\n    add rsp, 32\n";
+                } else {
+                    emit_expression(expr->left);  text_sec_ << "    push rax\n";
+                    emit_expression(expr->right); text_sec_ << "    mov rsi, rax\n    pop rdi\n";
+                    text_sec_ << "    call strcmp\n";
+                }
                 if (expr->op == "==") {
                     text_sec_ << "    cmp eax, 0\n    sete al\n    movzx eax, al\n";
                 } else {
@@ -1681,12 +1738,11 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 }
             }
 
-            // Check if calling native variadic slice function (any... args)
+            // Native variadic slice call (any... args)
             if (target_fn && target_fn->has_variadic_slice && !target_fn->is_extern_c) {
                 size_t fixed_count = target_fn->params.size() - 1;
                 size_t var_count = expr->args.size() >= fixed_count ? expr->args.size() - fixed_count : 0;
 
-                // Allocate stack space for Any array
                 uint32_t any_arr_off = current_stack_offset_ + (uint32_t)(var_count * 16 + 16);
                 any_arr_off = (any_arr_off + 15) & ~15;
 
@@ -1702,43 +1758,57 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                     text_sec_ << "    mov qword [rbp - " << (elem_off - 8) << "], " << tid << "\n";
                 }
 
-                const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+                const char* int_arg_regs_sysv[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+                const char* int_arg_regs_ms64[] = { "rcx", "rdx", "r8", "r9" };
                 size_t cur_int = 0;
 
                 for (size_t i = 0; i < fixed_count; ++i) {
                     emit_expression(expr->args[i]);
-                    if (cur_int < 6) {
-                        text_sec_ << "    mov " << int_arg_regs[cur_int++] << ", rax\n";
+                    if (target_os_ == TargetOS::Windows) {
+                        if (cur_int < 4) text_sec_ << "    mov " << int_arg_regs_ms64[cur_int++] << ", rax\n";
+                    } else {
+                        if (cur_int < 6) text_sec_ << "    mov " << int_arg_regs_sysv[cur_int++] << ", rax\n";
                     }
                 }
 
-                // Pass the Any[] slice as last 2 integer registers: ptr and length
-                if (cur_int + 1 < 6) {
-                    if (var_count > 0) {
-                        text_sec_ << "    lea " << int_arg_regs[cur_int++] << ", [rbp - " << any_arr_off << "]\n";
-                    } else {
-                        text_sec_ << "    xor " << int_arg_regs[cur_int++] << ", " << int_arg_regs[cur_int] << "\n";
+                if (target_os_ == TargetOS::Windows) {
+                    if (cur_int + 1 < 4) {
+                        if (var_count > 0) text_sec_ << "    lea " << int_arg_regs_ms64[cur_int++] << ", [rbp - " << any_arr_off << "]\n";
+                        else text_sec_ << "    xor " << int_arg_regs_ms64[cur_int++] << ", " << int_arg_regs_ms64[cur_int] << "\n";
+                        text_sec_ << "    mov " << int_arg_regs_ms64[cur_int++] << ", " << var_count << "\n";
                     }
-                    text_sec_ << "    mov " << int_arg_regs[cur_int++] << ", " << var_count << "\n";
+                } else {
+                    if (cur_int + 1 < 6) {
+                        if (var_count > 0) text_sec_ << "    lea " << int_arg_regs_sysv[cur_int++] << ", [rbp - " << any_arr_off << "]\n";
+                        else text_sec_ << "    xor " << int_arg_regs_sysv[cur_int++] << ", " << int_arg_regs_sysv[cur_int] << "\n";
+                        text_sec_ << "    mov " << int_arg_regs_sysv[cur_int++] << ", " << var_count << "\n";
+                    }
                 }
 
                 std::string call_lbl_aligned = next_label("L_call_aligned");
                 std::string call_lbl_done    = next_label("L_call_done");
 
-                text_sec_ << "    test rsp, 15\n";
-                text_sec_ << "    jz " << call_lbl_aligned << "\n";
-                text_sec_ << "    sub rsp, 8\n";
-                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-                text_sec_ << "    add rsp, 8\n";
-                text_sec_ << "    jmp " << call_lbl_done << "\n";
-                text_sec_ << call_lbl_aligned << ":\n";
-                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-                text_sec_ << call_lbl_done << ":\n";
+                if (target_os_ == TargetOS::Windows) {
+                    text_sec_ << "    sub rsp, 32\n";
+                    text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                    text_sec_ << "    add rsp, 32\n";
+                } else {
+                    text_sec_ << "    test rsp, 15\n";
+                    text_sec_ << "    jz " << call_lbl_aligned << "\n";
+                    text_sec_ << "    sub rsp, 8\n";
+                    text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                    text_sec_ << "    add rsp, 8\n";
+                    text_sec_ << "    jmp " << call_lbl_done << "\n";
+                    text_sec_ << call_lbl_aligned << ":\n";
+                    text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                    text_sec_ << call_lbl_done << ":\n";
+                }
                 return;
             }
 
-            const char* int_arg_regs[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
-            
+            const char* int_arg_regs_sysv[] = { "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+            const char* int_arg_regs_ms64[] = { "rcx", "rdx", "r8", "r9" };
+
             std::vector<bool> is_float_arg;
             std::vector<bool> is_128_arg;
             std::vector<bool> is_slice_arg;
@@ -1773,47 +1843,55 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             int cur_int_slot = int_slots - 1;
 
             for (int i = (int)expr->args.size() - 1; i >= 0; --i) {
-                if (is_float_arg[i]) {
-                    if (cur_flt < 8) {
-                        text_sec_ << "    movsd xmm" << cur_flt << ", [rsp]\n    add rsp, 8\n";
+                if (target_os_ == TargetOS::Windows) {
+                    if (is_float_arg[i]) {
+                        if (i < 4) text_sec_ << "    movsd xmm" << i << ", [rsp]\n    add rsp, 8\n";
+                        else text_sec_ << "    add rsp, 8\n";
                     } else {
-                        text_sec_ << "    add rsp, 8\n";
+                        if (i < 4) text_sec_ << "    pop " << int_arg_regs_ms64[i] << "\n";
+                        else text_sec_ << "    add rsp, 8\n";
                     }
-                    cur_flt--;
-                } else if (is_128_arg[i] || is_slice_arg[i]) {
-                    if (cur_int_slot - 1 < 6) text_sec_ << "    pop " << int_arg_regs[cur_int_slot - 1] << "\n";
-                    else text_sec_ << "    add rsp, 8\n";
-
-                    if (cur_int_slot < 6) text_sec_ << "    pop " << int_arg_regs[cur_int_slot] << "\n";
-                    else text_sec_ << "    add rsp, 8\n";
-
-                    cur_int_slot -= 2;
                 } else {
-                    if (cur_int_slot < 6) {
-                        text_sec_ << "    pop " << int_arg_regs[cur_int_slot] << "\n";
+                    if (is_float_arg[i]) {
+                        if (cur_flt < 8) text_sec_ << "    movsd xmm" << cur_flt << ", [rsp]\n    add rsp, 8\n";
+                        else text_sec_ << "    add rsp, 8\n";
+                        cur_flt--;
+                    } else if (is_128_arg[i] || is_slice_arg[i]) {
+                        if (cur_int_slot - 1 < 6) text_sec_ << "    pop " << int_arg_regs_sysv[cur_int_slot - 1] << "\n";
+                        else text_sec_ << "    add rsp, 8\n";
+                        if (cur_int_slot < 6) text_sec_ << "    pop " << int_arg_regs_sysv[cur_int_slot] << "\n";
+                        else text_sec_ << "    add rsp, 8\n";
+                        cur_int_slot -= 2;
                     } else {
-                        text_sec_ << "    add rsp, 8\n";
+                        if (cur_int_slot < 6) text_sec_ << "    pop " << int_arg_regs_sysv[cur_int_slot] << "\n";
+                        else text_sec_ << "    add rsp, 8\n";
+                        cur_int_slot--;
                     }
-                    cur_int_slot--;
                 }
             }
 
-            if (flt_count > 0) {
+            if (target_os_ == TargetOS::Linux && flt_count > 0) {
                 text_sec_ << "    mov al, " << std::min(flt_count, 8) << "\n";
             }
 
             std::string call_lbl_aligned = next_label("L_call_aligned");
             std::string call_lbl_done    = next_label("L_call_done");
 
-            text_sec_ << "    test rsp, 15\n";
-            text_sec_ << "    jz " << call_lbl_aligned << "\n";
-            text_sec_ << "    sub rsp, 8\n";
-            text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-            text_sec_ << "    add rsp, 8\n";
-            text_sec_ << "    jmp " << call_lbl_done << "\n";
-            text_sec_ << call_lbl_aligned << ":\n";
-            text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-            text_sec_ << call_lbl_done << ":\n";
+            if (target_os_ == TargetOS::Windows) {
+                text_sec_ << "    sub rsp, 32\n";
+                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                text_sec_ << "    add rsp, 32\n";
+            } else {
+                text_sec_ << "    test rsp, 15\n";
+                text_sec_ << "    jz " << call_lbl_aligned << "\n";
+                text_sec_ << "    sub rsp, 8\n";
+                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                text_sec_ << "    add rsp, 8\n";
+                text_sec_ << "    jmp " << call_lbl_done << "\n";
+                text_sec_ << call_lbl_aligned << ":\n";
+                text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
+                text_sec_ << call_lbl_done << ":\n";
+            }
             break;
         }
         default: break;

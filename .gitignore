@@ -1,4 +1,3 @@
-*.asm
 *.o
 *.vsix
 build/

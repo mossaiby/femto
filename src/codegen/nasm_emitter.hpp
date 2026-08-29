@@ -8,6 +8,11 @@
 
 namespace femto {
 
+enum class TargetOS {
+    Linux,
+    Windows
+};
+
 struct LoopContext {
     std::string continue_label;
     std::string break_label;
@@ -24,9 +29,11 @@ public:
                          const std::unordered_map<std::string, std::unordered_map<std::string, int64_t>>& enum_defs,
                          const std::unordered_map<std::string, int64_t>& const_defs,
                          const std::unordered_map<std::string, double>& float_const_defs,
-                         bool enable_bounds_checks = true)
+                         bool enable_bounds_checks = true,
+                         TargetOS target_os = TargetOS::Linux)
         : type_env_(type_env), enum_defs_(enum_defs), const_defs_(const_defs),
-          float_const_defs_(float_const_defs), enable_bounds_checks_(enable_bounds_checks) {}
+          float_const_defs_(float_const_defs), enable_bounds_checks_(enable_bounds_checks),
+          target_os_(target_os) {}
 
     std::string generate_assembly(const ASTProgram& program);
 
@@ -36,6 +43,7 @@ private:
     const std::unordered_map<std::string, int64_t>& const_defs_;
     const std::unordered_map<std::string, double>& float_const_defs_;
     bool enable_bounds_checks_ = true;
+    TargetOS target_os_ = TargetOS::Linux;
     std::stringstream text_sec_;
     std::stringstream rodata_sec_;
     std::stringstream data_sec_;

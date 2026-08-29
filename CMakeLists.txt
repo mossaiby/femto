@@ -7,19 +7,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Include directory for compiler headers
 include_directories(src tests/unit)
 
-# Path to the runtime assembly source and output object
-set(RUNTIME_ASM ${CMAKE_CURRENT_SOURCE_DIR}/runtime/femto_rt.asm)
-set(RUNTIME_OBJ ${CMAKE_CURRENT_BINARY_DIR}/femto_rt.o)
+# Platform-specific runtime assembly configuration
+if(WIN32 OR MSVC)
+    set(RUNTIME_ASM ${CMAKE_CURRENT_SOURCE_DIR}/runtime/femto_rt_windows.asm)
+    set(RUNTIME_OBJ ${CMAKE_CURRENT_BINARY_DIR}/femto_rt.obj)
+    set(NASM_FORMAT win64)
+else()
+    set(RUNTIME_ASM ${CMAKE_CURRENT_SOURCE_DIR}/runtime/femto_rt_linux.asm)
+    set(RUNTIME_OBJ ${CMAKE_CURRENT_BINARY_DIR}/femto_rt.o)
+    set(NASM_FORMAT elf64)
+endif()
 
-# Assemble femto_rt.asm using NASM
+# Assemble runtime assembly using NASM
 add_custom_command(
     OUTPUT ${RUNTIME_OBJ}
-    COMMAND nasm -f elf64 ${RUNTIME_ASM} -o ${RUNTIME_OBJ}
+    COMMAND nasm -f ${NASM_FORMAT} ${RUNTIME_ASM} -o ${RUNTIME_OBJ}
     DEPENDS ${RUNTIME_ASM}
-    COMMENT "Assembling Femto runtime: ${RUNTIME_ASM}"
+    COMMENT "Assembling Femto runtime (${NASM_FORMAT}): ${RUNTIME_ASM}"
 )
 
-# Custom target ensuring femto_rt.o is always built
+# Custom target ensuring runtime object is always built
 add_custom_target(femto_runtime ALL DEPENDS ${RUNTIME_OBJ})
 
 # Main compiler executable with LSP support
