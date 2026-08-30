@@ -16,11 +16,42 @@ global __builtin_panic
 global __builtin_exit
 global c_abs
 
+; POSIX compatibility thunks for Windows CRT low-level I/O
+global open
+global read
+global write
+global close
+global lseek
+
+extern _open
+extern _read
+extern _write
+extern _close
+extern _lseek
+
 extern malloc
 extern free
 extern realloc
 extern putchar
 extern exit
+
+; -----------------------------------------------------------------------------
+; Low-level POSIX I/O thunks
+; -----------------------------------------------------------------------------
+open:
+    jmp _open
+
+read:
+    jmp _read
+
+write:
+    jmp _write
+
+close:
+    jmp _close
+
+lseek:
+    jmp _lseek
 
 ; -----------------------------------------------------------------------------
 ; c_abs(ecx = int32 val) -> eax = int32
