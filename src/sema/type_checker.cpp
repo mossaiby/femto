@@ -921,6 +921,15 @@ SemaType* TypeChecker::check_expression(ASTExpr* expr, ASTProgram& prog) {
                 if (base_t->kind == SemaType::Kind::Pointer) {
                     return std::get<PointerTypeInfo>(base_t->data).pointee;
                 }
+                if (base_t->is_primitive(TokenKind::KwString8)) {
+                    return type_env_["char8"];
+                }
+                if (base_t->is_primitive(TokenKind::KwString16)) {
+                    return type_env_["char16"];
+                }
+                if (base_t->is_primitive(TokenKind::KwString32)) {
+                    return type_env_["char32"];
+                }
             }
             return type_env_["int32"];
         }

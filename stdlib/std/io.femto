@@ -35,7 +35,7 @@ print_any :: (Any a) -> void {
 }
 
 #export
-print :: (string8 fmt, any... args) -> void {
+print_formatted :: (string8 fmt, any[] args) -> void {
     uint64 arg_idx = 0;
     uint64 num_args = args.length();
     int32 i = 0;
@@ -55,8 +55,13 @@ print :: (string8 fmt, any... args) -> void {
 }
 
 #export
+print :: (string8 fmt, any... args) -> void {
+    print_formatted(fmt, args);
+}
+
+#export
 println :: (string8 fmt, any... args) -> void {
-    print(fmt, args);
+    print_formatted(fmt, args);
     __builtin_print_nl();
 }
 
