@@ -2494,36 +2494,58 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             }
 
             if (target_os_ == TargetOS::Windows) {
-                size_t num_args = expr->args.size();
-                size_t extra_args = (num_args > 4) ? (num_args - 4) : 0;
-                size_t call_stack = 32 + extra_args * 8;
-                call_stack = (call_stack + 15) & ~15;
-
-                text_sec_ << "    sub rsp, " << call_stack << "\n";
-
-                // Pass arguments 5+ on stack at [rsp + 32 + (i - 4)*8]
-                for (size_t i = 4; i < num_args; ++i) {
-                    emit_expression(expr->args[i]);
+                // 1. Push all argument expressions to stack in order (0 to num_args - 1)
+                for (size_t i = 0; i < expr->args.size(); ++i) {
                     if (is_float_arg[i]) {
-                        text_sec_ << "    movsd [rsp + " << (32 + (i - 4) * 8) << "], xmm0\n";
+                        emit_expression(expr->args[i]);
+                        text_sec_ << "    sub rsp, 8\n    movsd [rsp], xmm0\n";
+                    } else if (is_16b_arg[i]) {
+                        emit_expression(expr->args[i]);
+                        text_sec_ << "    push rdx\n    push rax\n";
                     } else {
-                        text_sec_ << "    mov [rsp + " << (32 + (i - 4) * 8) << "], rax\n";
+                        emit_expression(expr->args[i]);
+                        text_sec_ << "    push rax\n";
                     }
                 }
 
-                // Pass arguments 1-4 in registers (and float registers)
-                for (int i = (int)std::min(num_args, (size_t)4) - 1; i >= 0; --i) {
-                    emit_expression(expr->args[i]);
+                struct SlotInfo {
+                    bool is_float = false;
+                };
+                std::vector<SlotInfo> slots;
+                for (size_t i = 0; i < expr->args.size(); ++i) {
                     if (is_float_arg[i]) {
-                        text_sec_ << "    movaps xmm" << i << ", xmm0\n";
-                        text_sec_ << "    movq " << int_args_ms64[i].r64 << ", xmm0\n";
+                        slots.push_back({true});
+                    } else if (is_16b_arg[i]) {
+                        slots.push_back({false}); // low (data)
+                        slots.push_back({false}); // high (length)
                     } else {
-                        text_sec_ << "    mov " << int_args_ms64[i].r64 << ", rax\n";
+                        slots.push_back({false});
+                    }
+                }
+
+                size_t total_slots = slots.size();
+                size_t extra_slots = (total_slots > 4) ? (total_slots - 4) : 0;
+                size_t shadow_and_stack = 32 + extra_slots * 8;
+                shadow_and_stack = (shadow_and_stack + 15) & ~15;
+
+                text_sec_ << "    sub rsp, " << shadow_and_stack << "\n";
+                for (size_t k = 4; k < total_slots; ++k) {
+                    size_t src_off = shadow_and_stack + k * 8;
+                    size_t dst_off = 32 + (k - 4) * 8;
+                    text_sec_ << "    mov rax, [rsp + " << src_off << "]\n";
+                    text_sec_ << "    mov [rsp + " << dst_off << "], rax\n";
+                }
+
+                for (size_t k = 0; k < std::min(total_slots, (size_t)4); ++k) {
+                    size_t src_off = shadow_and_stack + k * 8;
+                    text_sec_ << "    mov " << int_args_ms64[k].r64 << ", [rsp + " << src_off << "]\n";
+                    if (slots[k].is_float) {
+                        text_sec_ << "    movq xmm" << k << ", " << int_args_ms64[k].r64 << "\n";
                     }
                 }
 
                 text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-                text_sec_ << "    add rsp, " << call_stack << "\n";
+                text_sec_ << "    add rsp, " << (shadow_and_stack + total_slots * 8) << "\n";
             } else {
                 // System V (Linux)
                 for (size_t i = 0; i < expr->args.size(); ++i) {
