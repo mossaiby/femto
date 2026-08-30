@@ -3,6 +3,7 @@
 #include <sstream>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include "frontend/ast.hpp"
 #include "sema/type_checker.hpp"
 
@@ -21,6 +22,19 @@ struct LoopContext {
 struct VarInfo {
     uint32_t stack_offset = 0;
     SemaType* type = nullptr;
+    bool in_register = false;
+    std::string reg_name;      // e.g. "r12", "r12d", "xmm6"
+    std::string reg_name_full; // 64-bit base register name e.g. "r12"
+    bool is_float_reg = false;
+};
+
+struct VarUsageStats {
+    std::string name;
+    SemaType* type = nullptr;
+    uint32_t weight = 0;
+    bool address_taken = false;
+    bool is_param = false;
+    size_t param_idx = 0;
 };
 
 class NasmEmitter {
@@ -52,8 +66,12 @@ private:
     std::vector<uint32_t> subject_stack_;
     std::vector<std::vector<const ASTStmt*>> defer_scopes_;
     uint32_t current_stack_offset_ = 0;
+    uint32_t current_frame_size_ = 0;
     const ASTProgram* current_program_ = nullptr;
     uint64_t label_seq_ = 0;
+
+    std::vector<std::string> used_saved_gp_regs_;
+    std::vector<std::string> used_saved_xmm_regs_;
 
     std::string next_label(std::string_view prefix) {
         return std::string(prefix) + "_" + std::to_string(++label_seq_);
@@ -73,11 +91,17 @@ private:
     SemaType* get_member_type(const ASTExpr* expr);
     SemaType* get_expr_type(const ASTExpr* expr);
 
+    void analyze_variable_usage(const ASTFunctionDecl* fn, std::unordered_map<std::string, VarUsageStats>& stats);
+    void perform_register_allocation(const ASTFunctionDecl* fn, const std::unordered_map<std::string, VarUsageStats>& stats);
+
     void emit_function(const ASTFunctionDecl* fn);
+    void emit_epilogue_sequence();
     void emit_statement(const ASTStmt* stmt, uint32_t& stack_offset);
     void emit_deferred_statements(uint32_t& stack_offset);
     void emit_expression(const ASTExpr* expr);
     void emit_lvalue_address(const ASTExpr* lval);
+
+    std::string optimize_assembly(const std::string& input);
 };
 
 } // namespace femto
