@@ -2,7 +2,7 @@
 
 Femto is a modern, statically typed, compiled systems programming language designed for deterministic performance, high safety guarantees, and low-level hardware control with zero runtime overhead.
 
-This repository contains the complete language specification, the standard library, the reference compiler implementation with built-in Language Server Protocol (`femtoc --lsp`) written in ISO C++20 targeting **x86-64 Linux** (System V AMD64 ABI / ELF64) and **x86-64 Windows** (Microsoft x64 ABI / Win64 / MSVC / Clang / GCC), and the official Visual Studio Code extension.
+This repository contains the complete language specification, standard library, Language Server Protocol (`femtoc --lsp`) daemon, reference compiler implementation written in ISO C++20 generating direct x86-64 NASM assembly for **Linux** (System V AMD64 ABI / ELF64) and **Windows** (Microsoft x64 ABI / Win64 / MSVC / Clang / GCC), and the official Visual Studio Code extension.
 
 ---
 
@@ -37,16 +37,16 @@ This repository contains the complete language specification, the standard libra
 
 ## Key Features
 
-- **No Undefined States:** Mandatory variable initialization; no implicit uninitialized memory reads.
-- **Fixed-Width Primitives:** Strict, platform-independent sizing (`int8`–`int512`, `uint8`–`uint512`, `float16`–`float128`, `uint64` indexing).
+- **No Undefined States:** Mandatory variable initialization; uninitialized memory reads are syntactically and semantically rejected.
+- **Fixed-Width Primitives:** Platform-independent numeric sizing (`int8`–`int512`, `uint8`–`uint512`, `float16`–`float128`, `uint64` indexing).
 - **Cross-Platform Native Code Generation:** Direct x86-64 NASM emission targeting **Linux (System V AMD64 ABI)** and **Windows (Microsoft x64 ABI)** with automatic MSVC/UCRT/SDK toolchain discovery.
 - **Type-Erased Variadics (`any... args`):** First-class polymorphic formatting and variadic functions with `{}` placeholder templates and zero hidden heap allocations.
-- **Deterministic Cleanup (`defer`):** First-class LIFO resource cleanup on block exits, early returns, and error unwraps with automatic return-value register preservation across multiple calling conventions.
-- **Compile-Time Reflection & Constant Evaluation:** Built-in reflection intrinsics (`@typeof`, `@file`, `@line`, `@target`, `@arch`, `@endian`, `@sizeof`, `@alignof`) and static `#if`/`#else` conditional compilation.
-- **Array Fill Syntax:** Full support for repeat-fill initialization (`int32[8] zeroed = [0...];`).
-- **Zero-Cost Generics:** Monomorphized compile-time generics with zero runtime metadata overhead.
-- **Explicit Type Conversions:** Clear taxonomy distinguishing safe widening conversions, explicit casts (`@cast`), and bit reinterpretation (`@bitcast`).
-- **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with first-class syntactic unwrap/propagation (`??`) and zero exception overhead.
+- **Deterministic Cleanup (`defer`):** LIFO resource cleanup on block exits, early returns, and error unwraps with automatic register preservation (`RAX`, `RDX`, `XMM0`).
+- **Compile-Time Reflection & Constant Evaluation:** Reflection intrinsics (`@typeof`, `@file`, `@line`, `@target`, `@arch`, `@endian`, `@sizeof`, `@alignof`) and static conditional compilation (`#if` / `#else`).
+- **Array Fill Syntax:** Contiguous repeat-fill array initialization syntax (`int32[8] zeroed = [0...];`).
+- **Zero-Cost Generics:** Fully monomorphized compile-time generics for functions, structs, and unions with zero runtime metadata overhead.
+- **Explicit Type Conversions:** Clear taxonomy distinguishing checked widening/narrowing casts (`@cast`) and bit reinterpretation (`@bitcast`).
+- **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with syntactic unwrapping and propagation (`??`) with zero exception overhead.
 - **Full Language Server Protocol (`femtoc --lsp`):** Out-of-the-box live diagnostics, type hovers, autocompletion with snippets & member fields, signature help, definition navigation (`F12`), symbol renaming (`F2`), references (`Shift+F12`), document formatting (`Shift+Alt+F`), and symbol outlines for VS Code.
 
 ---
@@ -62,11 +62,11 @@ This repository contains the complete language specification, the standard libra
 | **Signed Integers** | `int8`, `int16`, `int32`, `int64`, `int128`, `int256`, `int512` | Two's-complement arithmetic. Native 128-bit multi-register operations (`ADC`/`SBB`/`CQO`). |
 | **Unsigned Integers** | `uint8`, `uint16`, `uint32`, `uint64`, `uint128`, `uint256`, `uint512` | Binary unsigned representation. |
 | **Floating-Point** | `float16`, `float32`, `float64`, `float128` | IEEE 754 standard formats passed via SSE vector registers (`XMM0`–`XMM7` on Linux, `XMM0`–`XMM3` on Windows). |
-| **Boolean** | `bool8`, `bool16`, `bool32`, `bool64`, `bool128`, `bool256`, `bool512` | `0` is `false`; non-zero is `true`. Logical ops yield canonical `1`. |
-| **Code Units** | `char8`, `char16`, `char32` | UTF-8, UTF-16, and UTF-32 sized code unit primitives. |
-| **Strings** | `string8`, `string16`, `string32` | Fat-pointer string references: `{ const charN* data, uint64 length }`. Supports native `==` and `!=`. |
+| **Boolean** | `bool8`, `bool16`, `bool32`, `bool64`, `bool128`, `bool256`, `bool512` | `0` is `false`; non-zero is `true`. Logical operators yield canonical `1`. |
+| **Code Units** | `char8`, `char16`, `char32` | Sized Unicode code unit primitives (UTF-8, UTF-16, UTF-32). |
+| **Strings** | `string8`, `string16`, `string32` | Sized string references. Supports native equality (`==`) and inequality (`!=`). |
 | **Type Reflection** | `any` | 16-byte value fat-pointer: `{ int64 data, uint64 type_id }`. |
-| **Unit / Void** | `void` | Return-type marker only. |
+| **Unit / Void** | `void` | Return-type marker for procedures. |
 
 *All indexing, lengths, and capacities strictly use `uint64`.*
 
@@ -74,7 +74,7 @@ This repository contains the complete language specification, the standard libra
 
 ### 2. Literals and Constants
 
-- **Integers**: Decimal (`42`), Hexadecimal (`0xFF`), Binary (`0b1010`), Octal (`0o755`), with optional underscore separators (`1_000_000`).
+- **Integers**: Decimal (`42`), Hexadecimal (`0xFF`), Binary (`0b1010`), Octal (`0o755`), with optional digit separators (`1_000_000`).
 - **Floats**: `3.14159`, `1.0e-9`, `2.5E+3`.
 - **Characters & Strings**: `'a'`, `'\u{1F600}'`, `"standard string\n"`, and raw strings `` `C:\raw\path` ``.
 - **Pointers**: `null` (assignable only to raw pointers `T*` or comparable with pointer types).
@@ -91,7 +91,7 @@ const int32 y = 100;             // Immutable binding (compile-time checked)
 
 Point p = { .x = 10, .y = 20 };  // Designated struct field initialization
 int32[4] arr = [1, 2, 3, 4];     // Fixed-size stack array
-int32[8] zeroed = [0...];        // Fill all 8 elements with 0
+int32[8] zeroed = [0...];        // Repeat fill all 8 elements with 0
 int32[] slice = arr[0..3];       // Slice view over subrange [0, 3)
 
 // Compile-time constants
@@ -104,8 +104,8 @@ PI          :: 3.141592653589793;
 ### 4. Functions & Variadics
 
 - **Syntax:** `name :: (params) -> ReturnType { body }`
-- **Default Arguments:** Supported on parameters.
-- **Native Variadics (`any... args`):** Heterogeneous arguments bundled into an `any[]` slice on the caller's stack with zero dynamic allocations.
+- **Default Arguments:** Supported on parameters (`int32 b = 10`).
+- **Native Variadics (`any... args`):** Heterogeneous arguments bundled into an `any[]` slice on the caller's stack with zero dynamic heap allocations.
 - **C-FFI Variadics (`...`):** C-style `...` ellipsis is supported strictly within `extern "C"` blocks.
 
 ```c++
@@ -154,7 +154,7 @@ int32 m = max<int32>(3, 7);
 ### 6. Pointers, Arrays, and Slices
 
 - **Raw Pointer (`T*`)**: Address-of `&x`, dereference `*p`. Single-level auto-dereferencing applies for member access (`p.field` desugars to `(*p).field`).
-- **Fixed-Size Array (`T[N]`)**: Contiguous value type allocated inline or on stack with fixed compile-time size `N`. Supports fill initialization `[val...]`.
+- **Fixed-Size Array (`T[N]`)**: Contiguous value type allocated inline or on the stack with fixed compile-time size `N`. Supports fill initialization `[val...]`.
 - **Slice (`T[]`)**: 16-byte value fat-pointer `{ T* data, uint64 length }`.
 - **Bounds Checking**: Sub-slicing `arr[start..end]` and element indexing `slice[i]` perform runtime safety bounds validation, calling panic handlers if violated.
 
@@ -322,17 +322,18 @@ main :: () -> int32 {
 
 ## ABI and Calling Conventions
 
-Femto supports target-specific ABI lowering and register allocation:
+Femto supports target-specific ABI lowering, register allocation, and stack alignment:
 
-| Femto Type | Layout | Linux (System V AMD64 ABI) | Windows (Microsoft x64 ABI) |
+| Femto Type | Memory Layout | Linux (System V AMD64 ABI) | Windows (Microsoft x64 ABI) |
 |---|---|---|---|
 | `int8`..`int64`, `uint8`..`uint64`, `boolN`, `charN`, `T*` | 1, 2, 4, 8 bytes | `RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9` | `RCX`, `RDX`, `R8`, `R9` |
 | `int128`, `uint128` | 16 bytes (low 64, high 64) | Pair (`RDI:RSI` or `RAX:RDX`) | Register pair / stack frame |
 | `float32`, `float64` | IEEE 754 (4 or 8 bytes) | `XMM0`–`XMM7` | `XMM0`–`XMM3` (shadow space preserved) |
-| Slice `T[]` / `stringN` / `any[]` | `{ T* data, uint64 len }` (16 bytes) | Passed across two registers | Passed across two integer registers |
+| Slice `T[]` / `stringN` / `any[]` | `{ T* data, uint64 len }` (16 bytes) | Passed across two integer registers | Passed across two integer registers |
 | Type Reflection `any` | `{ int64 data, uint64 type_id }` | 16 bytes on stack / registers | 16 bytes on stack / registers |
 | Result `!T` | `{ int32 code, [pad], T val }` | Register pair (`RAX:RDX`) | Register pair (`RAX:RDX`) |
-| Stack Frame Alignment | 16-byte dynamic | 16-byte System V boundary | 32-byte shadow space + 16-byte alignment |
+| Read-Only Data Section | Static literals / tables | `.rodata` | `.rdata` |
+| Stack Frame Alignment | 16-byte dynamic | 16-byte boundary | 32-byte shadow space + 16-byte alignment |
 
 ---
 
@@ -359,11 +360,12 @@ Femto supports target-specific ABI lowering and register allocation:
             │
             ▼
    [ NASM Code Generator ]
-   ├── Dynamic Stack Frame Calculation
+   ├── Dynamic Stack Frame & 16-Byte Boundary Alignment
    ├── System V (Linux) / MS x64 (Windows) ABI Lowering
+   ├── Greedy Callee-Saved Register Allocation (R12–R15, XMM6–XMM13)
    ├── LIFO Defer Execution Engine with Register Preservation
    ├── Auto-Packed `any...` Variadic Slices
-   └── Sized Instruction Lowering
+   └── Multi-Pass Peephole Optimizer
             │
             ▼
    Assembly File (.asm)
@@ -382,11 +384,11 @@ femto/
 ├── test_runner.py              # Automated 3-tier cross-platform test runner
 ├── runtime/
 │   ├── femto_rt_linux.asm      # Linux assembly runtime (sys_mmap, sys_write, exit)
-│   └── femto_rt_windows.asm    # Windows assembly runtime (MSVC CRT / Win64)
+│   └── femto_rt_windows.asm    # Windows assembly runtime (MSVC UCRT / Win64)
 ├── src/
 │   ├── main.cpp                # Compiler CLI driver, auto-discovery & module loader
 │   ├── common/
-│   │   ├── arena.hpp           # High-performance monotonic arena allocator
+│   │   ├── arena.hpp           # Monotonic arena memory allocator
 │   │   ├── diagnostic.hpp      # ANSI color source diagnostic reporter
 │   │   ├── module_loader.hpp   # Recursive multi-module resolver
 │   │   └── source_manager.hpp  # Line/column tracking & binary search
@@ -421,7 +423,7 @@ femto/
 │       └── syntaxes/
 │           └── femto.tmLanguage.json
 └── tests/
-    ├── unit/                   # Tier 1: C++ compiler component unit tests
+    ├── unit/                   # Tier 1: C++ compiler component unit tests (25 tests)
     │   ├── main.cpp            # Native unit test runner
     │   ├── test_framework.hpp  # Zero-dependency test assertion framework
     │   ├── test_lexer.cpp      # Lexer component test cases
@@ -429,7 +431,7 @@ femto/
     │   ├── test_sema.cpp       # Semantic analyzer & layout tests
     │   ├── test_codegen.cpp    # Code generator & stack frame tests
     │   └── test_lsp.cpp        # Language Server Protocol unit tests
-    ├── negative/               # Tier 2: Negative compilation rejection tests
+    ├── negative/               # Tier 2: Negative compilation rejection tests (5 tests)
     │   ├── neg_01_type_mismatch.femto
     │   ├── neg_02_const_mutation.femto
     │   ├── neg_03_break_depth.femto
@@ -494,7 +496,7 @@ cmake --build .
 mkdir build
 cd build
 cmake ..
-cmake --build . --config Debug
+cmake --build . --config Release
 ```
 
 ### Generated Binaries:
@@ -508,15 +510,15 @@ cmake --build . --config Debug
 
 Femto features a unified 3-tier test suite:
 
-1. **Tier 1 (Internal Unit Tests):** Verifies internal compiler components (`Lexer`, `Parser`, `Sema`, `TypeChecker`, `Monomorphizer`, `NasmEmitter`, `LspServer`) in isolation.
-2. **Tier 2 (Negative Diagnostic Tests):** Verifies that semantic and syntactic errors (e.g. type mismatches, mutating `const` variables, invalid `break` levels) are rejected with accurate diagnostics.
-3. **Tier 3 (End-to-End Tests):** Compiles and executes comprehensive `.femto` test suites verifying integer math, floats, control flow, `defer` LIFO cleanup, pattern matching, structs, unions, pointers, slices, results, generics, metaprogramming, C-FFI variadics, native `{}` formatting, array repeat fills (`[val...]`), reflection intrinsics, and stdlib modules.
+1. **Tier 1 (Internal Unit Tests):** Verifies internal compiler components (`Lexer`, `Parser`, `Sema`, `TypeChecker`, `Monomorphizer`, `NasmEmitter`, `LspServer`) in isolation (25 tests).
+2. **Tier 2 (Negative Diagnostic Tests):** Verifies that semantic and syntactic errors (e.g. type mismatches, mutating `const` variables, invalid `break` levels) are rejected with accurate diagnostics (5 tests).
+3. **Tier 3 (End-to-End Tests):** Compiles and executes 16 comprehensive `.femto` test suites verifying integer math, floats, control flow, `defer` LIFO cleanup, pattern matching, structs, unions, pointers, slices, results, generics, metaprogramming, C-FFI variadics, native `{}` formatting, array repeat fills (`[val...]`), reflection intrinsics, and stdlib modules.
 
 ### Running All Tests
 
 From the repository root:
 ```bash
-python test_runner.py
+python -u test_runner.py
 ```
 Or directly using CMake/Ninja from your build directory:
 ```bash
@@ -571,7 +573,7 @@ Options:
    ./hello
 
    # On Windows:
-   build\Debug\femtoc.exe hello.femto -o hello.exe
+   build\Release\femtoc.exe hello.femto -o hello.exe
    .\hello.exe
    ```
 
