@@ -1,8 +1,8 @@
 # Femto Programming Language
 
-Femto is a modern, statically typed, compiled systems programming language designed for deterministic performance, high safety guarantees, and low-level control without runtime overhead.
+Femto is a modern, statically typed, compiled systems programming language designed for deterministic performance, high safety guarantees, and low-level hardware control with zero runtime overhead.
 
-This repository contains the language specification, the standard library, the reference compiler implementation with built-in Language Server Protocol (`femtoc --lsp`) written in ISO C++20 targeting x86-64 Linux (NASM/libc/System V AMD64 ABI), and the official Visual Studio Code extension.
+This repository contains the complete language specification, the standard library, the reference compiler implementation with built-in Language Server Protocol (`femtoc --lsp`) written in ISO C++20 targeting **x86-64 Linux** (System V AMD64 ABI / ELF64) and **x86-64 Windows** (Microsoft x64 ABI / Win64 / MSVC / Clang / GCC), and the official Visual Studio Code extension.
 
 ---
 
@@ -22,13 +22,14 @@ This repository contains the language specification, the standard library, the r
   - [10. Error Handling (`!T` / `!void`)](#10-error-handling-t-and-void)
   - [11. Modules, Visibility, and C Interop](#11-modules-visibility-and-c-interop)
   - [12. Compile-Time Metaprogramming](#12-compile-time-metaprogramming)
-- [ABI and Memory Layout](#abi-and-memory-layout)
+- [ABI and Calling Conventions](#abi-and-calling-conventions)
 - [Compiler & LSP Architecture](#compiler--lsp-architecture)
 - [Project Layout](#project-layout)
 - [Editor Support (VS Code & LSP)](#editor-support-vs-code--lsp)
 - [Prerequisites and Toolchain](#prerequisites-and-toolchain)
 - [Building the Compiler](#building-the-compiler)
 - [Automated Test Suite](#automated-test-suite)
+- [CLI Reference](#cli-reference)
 - [Quick Start Example](#quick-start-example)
 - [License](#license)
 
@@ -38,16 +39,15 @@ This repository contains the language specification, the standard library, the r
 
 - **No Undefined States:** Mandatory variable initialization; no implicit uninitialized memory reads.
 - **Fixed-Width Primitives:** Strict, platform-independent sizing (`int8`–`int512`, `uint8`–`uint512`, `float16`–`float128`, `uint64` indexing).
+- **Cross-Platform Native Code Generation:** Direct x86-64 NASM emission targeting **Linux (System V AMD64 ABI)** and **Windows (Microsoft x64 ABI)** with automatic MSVC/UCRT/SDK toolchain discovery.
 - **Type-Erased Variadics (`any... args`):** First-class polymorphic formatting and variadic functions with `{}` placeholder templates and zero hidden heap allocations.
-- **Deterministic Cleanup (`defer`):** First-class LIFO resource cleanup on block exits, early returns, and error unwraps with automatic return value register preservation.
-- **Compile-Time Reflection:** Built-in reflection intrinsics (`@typeof`, `@file`, `@line`, `@target`, `@arch`, `@endian`, `@sizeof`, `@alignof`).
+- **Deterministic Cleanup (`defer`):** First-class LIFO resource cleanup on block exits, early returns, and error unwraps with automatic return-value register preservation across multiple calling conventions.
+- **Compile-Time Reflection & Constant Evaluation:** Built-in reflection intrinsics (`@typeof`, `@file`, `@line`, `@target`, `@arch`, `@endian`, `@sizeof`, `@alignof`) and static `#if`/`#else` conditional compilation.
 - **Array Fill Syntax:** Full support for repeat-fill initialization (`int32[8] zeroed = [0...];`).
-- **Full Language Server Protocol (`femtoc --lsp`):** Out-of-the-box live diagnostics, type hovers, autocompletion with snippets & member fields, signature help, definition navigation (`F12`), symbol renaming (`F2`), references (`Shift+F12`), document formatting (`Shift+Alt+F`), and symbol outlines for VS Code.
 - **Zero-Cost Generics:** Monomorphized compile-time generics with zero runtime metadata overhead.
 - **Explicit Type Conversions:** Clear taxonomy distinguishing safe widening conversions, explicit casts (`@cast`), and bit reinterpretation (`@bitcast`).
-- **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with first-class syntactic support (`??`) and zero exception overhead.
-- **System V AMD64 ABI Compliance:** Native register allocation across integer registers (`RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`), SSE registers (`XMM0`–`XMM7`), 128-bit register pairs (`RAX:RDX`), and dynamic 16-byte stack frame alignment.
-- **Self-Contained Assembly Runtime:** Direct Linux syscall bindings (`sys_mmap`, `sys_munmap`, `sys_write`, `sys_exit`) providing microscopic standalone executable support.
+- **Result-Based Error Handling:** Built-in discriminated union result types (`!T`, `!void`) with first-class syntactic unwrap/propagation (`??`) and zero exception overhead.
+- **Full Language Server Protocol (`femtoc --lsp`):** Out-of-the-box live diagnostics, type hovers, autocompletion with snippets & member fields, signature help, definition navigation (`F12`), symbol renaming (`F2`), references (`Shift+F12`), document formatting (`Shift+Alt+F`), and symbol outlines for VS Code.
 
 ---
 
@@ -59,12 +59,12 @@ This repository contains the language specification, the standard library, the r
 
 | Category | Types | Details |
 |---|---|---|
-| **Signed Integers** | `int8`, `int16`, `int32`, `int64`, `int128`, `int256`, `int512` | Two's-complement arithmetic. Native 128-bit multi-register operations (`ADC`/`SBB`). |
+| **Signed Integers** | `int8`, `int16`, `int32`, `int64`, `int128`, `int256`, `int512` | Two's-complement arithmetic. Native 128-bit multi-register operations (`ADC`/`SBB`/`CQO`). |
 | **Unsigned Integers** | `uint8`, `uint16`, `uint32`, `uint64`, `uint128`, `uint256`, `uint512` | Binary unsigned representation. |
-| **Floating-Point** | `float16`, `float32`, `float64`, `float128` | IEEE 754 standard formats passed via SSE vector registers (`XMM0`–`XMM7`). |
+| **Floating-Point** | `float16`, `float32`, `float64`, `float128` | IEEE 754 standard formats passed via SSE vector registers (`XMM0`–`XMM7` on Linux, `XMM0`–`XMM3` on Windows). |
 | **Boolean** | `bool8`, `bool16`, `bool32`, `bool64`, `bool128`, `bool256`, `bool512` | `0` is `false`; non-zero is `true`. Logical ops yield canonical `1`. |
 | **Code Units** | `char8`, `char16`, `char32` | UTF-8, UTF-16, and UTF-32 sized code unit primitives. |
-| **Strings** | `string8`, `string16`, `string32` | Fat-pointer string references: `{ const charN* data, uint64 length }`. Supports `==` and `!=`. |
+| **Strings** | `string8`, `string16`, `string32` | Fat-pointer string references: `{ const charN* data, uint64 length }`. Supports native `==` and `!=`. |
 | **Type Reflection** | `any` | 16-byte value fat-pointer: `{ int64 data, uint64 type_id }`. |
 | **Unit / Void** | `void` | Return-type marker only. |
 
@@ -105,7 +105,7 @@ PI          :: 3.141592653589793;
 
 - **Syntax:** `name :: (params) -> ReturnType { body }`
 - **Default Arguments:** Supported on parameters.
-- **Native Variadics (`any... args`):** Allows functions to receive variable numbers of heterogeneous arguments automatically bundled into an `any[]` slice on the caller's stack.
+- **Native Variadics (`any... args`):** Heterogeneous arguments bundled into an `any[]` slice on the caller's stack with zero dynamic allocations.
 - **C-FFI Variadics (`...`):** C-style `...` ellipsis is supported strictly within `extern "C"` blocks.
 
 ```c++
@@ -311,28 +311,28 @@ main :: () -> int32 {
 ### 12. Compile-Time Metaprogramming
 
 - Static conditionals: `#if (cond) { ... } #else { ... }`
-- Built-in reflection & size intrinsics:
+- Built-in reflection intrinsics:
   - `@typeof(expr)`: Evaluates the compile-time type name of an expression as a `string8`.
-  - `@file`, `@line`: Resolves current source file path and line number.
-  - `@target`, `@arch`, `@endian`: Evaluates target architecture and platform strings.
+  - `@file`, `@line`: Resolves the current source file path and line number.
+  - `@target`, `@arch`, `@endian`: Evaluates target architecture and platform strings (`x86_64-linux` / `x86_64-windows`).
   - `@sizeof(T)`, `@alignof(T)`: Computes struct, union, or primitive sizes and alignment bytes.
   - `@cast(TargetType, expr)`, `@bitcast(TargetType, expr)`.
 
 ---
 
-## ABI and Memory Layout
+## ABI and Calling Conventions
 
-Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
+Femto supports target-specific ABI lowering and register allocation:
 
-| Femto Type | In-Memory Layout | ABI Passing Register(s) |
-|---|---|---|
-| `int8`..`int64`, `uint8`..`uint64`, `boolN`, `charN`, `T*` | 1, 2, 4, 8 bytes | `INTEGER` registers (`RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`) |
-| `int128`, `uint128` | 16 bytes (low 64-bit, high 64-bit) | `INTEGER` register pair (`RDI:RSI` or `RAX:RDX`) |
-| `float32`, `float64` | IEEE 754 (4 or 8 bytes) | `SSE` vector registers (`XMM0`–`XMM7`) |
-| Slice `T[]` / `stringN` / `any[]` | `{ T* data, uint64 length }` (16 bytes) | Passed across two `INTEGER` registers |
-| Type Reflection `any` | `{ int64 data, uint64 type_id }` (16 bytes) | Struct memory / pointer reference |
-| Result `!T` | `{ int32 code, [pad], T value }` (16 bytes) | Register pair (`RAX:RDX`) |
-| Struct / Union | Field offset & padding aligned | Value copy / pointer reference |
+| Femto Type | Layout | Linux (System V AMD64 ABI) | Windows (Microsoft x64 ABI) |
+|---|---|---|---|
+| `int8`..`int64`, `uint8`..`uint64`, `boolN`, `charN`, `T*` | 1, 2, 4, 8 bytes | `RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9` | `RCX`, `RDX`, `R8`, `R9` |
+| `int128`, `uint128` | 16 bytes (low 64, high 64) | Pair (`RDI:RSI` or `RAX:RDX`) | Register pair / stack frame |
+| `float32`, `float64` | IEEE 754 (4 or 8 bytes) | `XMM0`–`XMM7` | `XMM0`–`XMM3` (shadow space preserved) |
+| Slice `T[]` / `stringN` / `any[]` | `{ T* data, uint64 len }` (16 bytes) | Passed across two registers | Passed across two integer registers |
+| Type Reflection `any` | `{ int64 data, uint64 type_id }` | 16 bytes on stack / registers | 16 bytes on stack / registers |
+| Result `!T` | `{ int32 code, [pad], T val }` | Register pair (`RAX:RDX`) | Register pair (`RAX:RDX`) |
+| Stack Frame Alignment | 16-byte dynamic | 16-byte System V boundary | 32-byte shadow space + 16-byte alignment |
 
 ---
 
@@ -342,7 +342,7 @@ Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
                       Source Code (.femto)
                                │
             ┌──────────────────┴──────────────────┐
-            ▼ (Batch Mode)                        ▼ (LSP Mode: femtoc --lsp)
+            ▼ (Batch Compilation)                 ▼ (LSP Mode: femtoc --lsp)
    [ Arena Allocator ]                   [ LSP JSON-RPC Engine ]
             │                                     │
             ▼                                     ├── Live Diagnostics
@@ -360,16 +360,16 @@ Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
             ▼
    [ NASM Code Generator ]
    ├── Dynamic Stack Frame Calculation
-   ├── 16-Byte System V ABI Alignment
-   ├── LIFO Defer Execution Engine
-   ├── Auto-Packed `any...` Slice Lowering
+   ├── System V (Linux) / MS x64 (Windows) ABI Lowering
+   ├── LIFO Defer Execution Engine with Register Preservation
+   ├── Auto-Packed `any...` Variadic Slices
    └── Sized Instruction Lowering
             │
             ▼
    Assembly File (.asm)
             │
             ▼
-[ nasm -f elf64 + gcc ] ──► Native ELF-64 Executable
+[ nasm + linker (gcc / clang / MSVC link.exe) ] ──► Native Executable
 ```
 
 ---
@@ -378,56 +378,56 @@ Femto strictly conforms to the System V AMD64 ABI on x86-64 Linux:
 
 ```
 femto/
-├── CMakeLists.txt              # CMake build configuration & check target
-├── test_runner.py              # Automated 3-tier test runner
+├── CMakeLists.txt              # CMake unified build configuration & check target
+├── test_runner.py              # Automated 3-tier cross-platform test runner
 ├── runtime/
-│   └── femto_rt.asm            # Assembly runtime (allocator, formatting, panic)
+│   ├── femto_rt_linux.asm      # Linux assembly runtime (sys_mmap, sys_write, exit)
+│   └── femto_rt_windows.asm    # Windows assembly runtime (MSVC CRT / Win64)
 ├── src/
-│   ├── main.cpp                # Compiler CLI entry point & module loader
+│   ├── main.cpp                # Compiler CLI driver, auto-discovery & module loader
 │   ├── common/
-│   │   ├── arena.hpp           # Memory arena buffer resource
-│   │   ├── diagnostic.hpp      # ANSI source diagnostics reporting
+│   │   ├── arena.hpp           # High-performance monotonic arena allocator
+│   │   ├── diagnostic.hpp      # ANSI color source diagnostic reporter
 │   │   ├── module_loader.hpp   # Recursive multi-module resolver
 │   │   └── source_manager.hpp  # Line/column tracking & binary search
 │   ├── frontend/
 │   │   ├── token.hpp           # Token taxonomy
-│   │   ├── lexer.hpp / .cpp    # Tokenizer
-│   │   ├── ast.hpp             # AST node structures
+│   │   ├── lexer.hpp / .cpp    # Lexer & tokenizer
+│   │   ├── ast.hpp             # AST node data structures
 │   │   └── parser.hpp / .cpp   # Pratt precedence parser & AST builder
 │   ├── sema/
-│   │   └── type_checker.hpp / .cpp # Type verification & monomorphizer
+│   │   └── type_checker.hpp / .cpp # Type system, memory layout & monomorphizer
 │   ├── codegen/
-│   │   └── nasm_emitter.hpp / .cpp # x86-64 Intel NASM code generator
+│   │   └── nasm_emitter.hpp / .cpp # Cross-platform x86-64 Intel NASM code generator
 │   └── lsp/
 │       ├── json.hpp            # Zero-dependency JSON parser & serializer
 │       └── lsp_server.hpp / .cpp # Language Server Protocol daemon
 ├── stdlib/
 │   └── std/
-│       ├── builtin.femto       # Builtin runtime bindings
-│       ├── c.femto             # Libc C-FFI wrappers (printf, malloc, open)
+│       ├── builtin.femto       # Builtin runtime assembly bindings
+│       ├── c.femto             # Libc / MSVCRT C-FFI wrappers
 │       ├── collection.femto    # Dynamic Array<T>
 │       ├── fs.femto            # File stream I/O
 │       ├── io.femto            # Native {} formatting & printing (println, print)
 │       ├── math.femto          # Mathematical functions & constants
-│       ├── mem.femto           # Low-level memory utilities
+│       ├── mem.femto           # Low-level memory management utilities
 │       ├── string.femto        # Dynamic growable String builder
 │       └── sys.femto           # Process exit & panic utilities
 ├── editors/
-│   └── vscode/                 # Visual Studio Code syntax & LSP extension
+│   └── vscode/                 # Visual Studio Code syntax & LSP extension (v0.2.0)
 │       ├── package.json
 │       ├── extension.js
 │       ├── language-configuration.json
-│       ├── README.md
 │       └── syntaxes/
 │           └── femto.tmLanguage.json
 └── tests/
-    ├── unit/                   # Tier 1: C++ component unit tests
-    │   ├── main.cpp            # Native unit test runner entry point
+    ├── unit/                   # Tier 1: C++ compiler component unit tests
+    │   ├── main.cpp            # Native unit test runner
     │   ├── test_framework.hpp  # Zero-dependency test assertion framework
     │   ├── test_lexer.cpp      # Lexer component test cases
     │   ├── test_parser.cpp     # Parser component test cases
     │   ├── test_sema.cpp       # Semantic analyzer & layout tests
-    │   ├── test_codegen.cpp    # Code generation & frame sizing tests
+    │   ├── test_codegen.cpp    # Code generator & stack frame tests
     │   └── test_lsp.cpp        # Language Server Protocol unit tests
     ├── negative/               # Tier 2: Negative compilation rejection tests
     │   ├── neg_01_type_mismatch.femto
@@ -442,45 +442,65 @@ femto/
 
 ## Editor Support (VS Code & LSP)
 
-The repository includes a full Language Server Protocol extension for Visual Studio Code in `editors/vscode`.
+The repository includes a Language Server Protocol extension for Visual Studio Code in `editors/vscode`.
 
 To install it locally:
+
+### Linux / macOS
 ```bash
 ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/femto-vscode
 cd editors/vscode && npm install
 ```
-Or on Windows (PowerShell):
+
+### Windows (PowerShell)
 ```powershell
 New-Item -ItemType SymbolicLink -Path "$HOME\.vscode\extensions\femto-vscode" -Target "$PWD\editors\vscode"
 cd editors/vscode; npm install
 ```
-Reload VS Code to enable real-time red squiggly error diagnostics, type hovers, autocompletions with snippets & member fields, signature help, definition navigation (`F12`), symbol renaming (`F2`), find references (`Shift+F12`), document formatting (`Shift+Alt+F`), and document outlines.
+
+Reload VS Code to activate:
+- Real-time syntax and semantic error diagnostics.
+- Type hover inspection for variables, functions, and structs.
+- Autocompletion with snippets and struct member fields.
+- Signature help with active parameter highlighting.
+- Jump to definition (`F12`), rename symbol (`F2`), and find references (`Shift+F12`).
+- Document formatting (`Shift+Alt+F`) and symbol outlines in the sidebar.
 
 ---
 
 ## Prerequisites and Toolchain
 
-- **C++ Compiler:** GCC ($\ge 12$) or Clang ($\ge 16$) supporting ISO C++20.
-- **Assembler:** [NASM](https://www.nasm.us/) ($\ge 2.15$).
+- **C++ Compiler:** GCC ($\ge 12$), Clang ($\ge 16$), or MSVC (Visual Studio 2022+) supporting ISO C++20.
+- **Assembler:** [NASM](https://www.nasm.us/) ($\ge 2.15$) in your `PATH`.
 - **Build System:** CMake ($\ge 3.20$) and Make/Ninja.
-- **Linker / C Runtime:** GNU `ld` / `gcc` driver with standard `libc` and `libm`.
+- **Linker / C Runtime:** 
+  - **Linux:** GNU `gcc` / `ld` with standard `libc` and `libm`.
+  - **Windows:** Visual Studio MSVC tools (`link.exe` / `cl.exe`), Clang, or GCC / MinGW.
 - **Python:** Python 3.8+ (for automated test orchestration).
 
 ---
 
 ## Building the Compiler
 
-1. **Configure and build using CMake:**
-   ```bash
-   mkdir build && cd build
-   cmake ..
-   cmake --build .
-   ```
+### On Linux / macOS:
+```bash
+mkdir build && cd build
+cmake ..
+cmake --build .
+```
 
-2. **Binaries generated in `build/`:**
-   - `femtoc`: The Femto reference compiler & LSP server (`femtoc --lsp`).
-   - `femto_unit_tests`: The native C++ component test runner.
-   - `femto_rt.o`: The assembled native runtime object.
+### On Windows (Visual Studio / Ninja / MSVC):
+```powershell
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Debug
+```
+
+### Generated Binaries:
+- `femtoc` / `femtoc.exe`: Reference compiler and LSP server (`femtoc --lsp`).
+- `femto_unit_tests` / `femto_unit_tests.exe`: Native C++ component unit test runner.
+- `femto_rt.o` / `femto_rt.obj`: Assembled native runtime object.
 
 ---
 
@@ -501,6 +521,23 @@ python test_runner.py
 Or directly using CMake/Ninja from your build directory:
 ```bash
 cmake --build build --target check
+```
+
+---
+
+## CLI Reference
+
+```text
+Usage: femtoc <source.femto> [options]
+
+Options:
+  -o <file>             Specify output executable name (default: a.out / a.exe)
+  --target <target>     Target platform: x86_64-linux, x86_64-windows
+  -I <dir>              Add search directory for module imports
+  --stdlib <dir>        Specify custom path to standard library
+  --lsp                 Start the Language Server Protocol (LSP) daemon
+  --no-bounds-check     Disable runtime array and slice bounds checks
+  --keep-temps, -k      Keep intermediate assembly (.asm) and object (.obj/.o) files
 ```
 
 ---
@@ -529,8 +566,13 @@ cmake --build build --target check
 
 2. **Compile to a native binary:**
    ```bash
+   # On Linux:
    build/femtoc hello.femto -o hello
    ./hello
+
+   # On Windows:
+   build\Debug\femtoc.exe hello.femto -o hello.exe
+   .\hello.exe
    ```
 
 ---
