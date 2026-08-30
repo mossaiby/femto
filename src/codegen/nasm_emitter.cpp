@@ -343,7 +343,7 @@ bool NasmEmitter::is_float_expr(const ASTExpr* expr) {
                 expr->raw_text.find('e') != std::string_view::npos ||
                 expr->raw_text.find('E') != std::string_view::npos);
     }
-    if (expr->kind == ExprKind::Cast) {
+    if (expr->kind == ExprKind::Cast || expr->kind == ExprKind::BuiltinBitcast) {
         auto* target_ty = resolve_type_node(expr->target_type);
         return target_ty && target_ty->is_floating_point();
     }
@@ -383,7 +383,7 @@ bool NasmEmitter::is_float_expr(const ASTExpr* expr) {
 
 bool NasmEmitter::is_128bit_expr(const ASTExpr* expr) {
     if (!expr) return false;
-    if (expr->kind == ExprKind::Cast) {
+    if (expr->kind == ExprKind::Cast || expr->kind == ExprKind::BuiltinBitcast) {
         auto* tgt = resolve_type_node(expr->target_type);
         return tgt && tgt->is_128bit();
     }
@@ -457,7 +457,7 @@ bool NasmEmitter::is_64bit_expr(const ASTExpr* expr) {
             if (vty->size_bytes == 8 && !vty->is_floating_point()) return true;
         }
     }
-    if (expr->kind == ExprKind::Cast) {
+    if (expr->kind == ExprKind::Cast || expr->kind == ExprKind::BuiltinBitcast) {
         auto* tgt = resolve_type_node(expr->target_type);
         if (tgt) {
             if (tgt->kind == SemaType::Kind::Pointer) return true;
@@ -1557,7 +1557,17 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
             break;
         }
         case ExprKind::BuiltinBitcast: {
+            auto* dst_ty = resolve_type_node(expr->target_type);
+            bool src_is_flt = is_float_expr(expr->left);
+            bool dst_is_flt = dst_ty && dst_ty->is_floating_point();
+
             emit_expression(expr->left);
+
+            if (!src_is_flt && dst_is_flt) {
+                text_sec_ << "    movq xmm0, rax\n";
+            } else if (src_is_flt && !dst_is_flt) {
+                text_sec_ << "    movq rax, xmm0\n";
+            }
             break;
         }
         case ExprKind::Identifier: {
