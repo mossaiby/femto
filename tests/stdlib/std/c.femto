@@ -1,0 +1,62 @@
+extern "C" {
+    // stdio.h
+    printf   :: (string8 fmt, ...) -> int32;
+    sprintf  :: (int64 buf, string8 fmt, ...) -> int32;
+    snprintf :: (int64 buf, uint64 size, string8 fmt, ...) -> int32;
+    puts     :: (string8 str) -> int32;
+    putchar  :: (int32 c) -> int32;
+    getchar  :: () -> int32;
+    perror   :: (string8 msg) -> void;
+
+    // stdlib.h
+    malloc   :: (uint64 size) -> int64;
+    calloc   :: (uint64 num, uint64 size) -> int64;
+    realloc  :: (int64 ptr, uint64 size) -> int64;
+    free     :: (int64 ptr) -> void;
+    exit     :: (int32 status) -> void;
+    abort    :: () -> void;
+    system   :: (string8 command) -> int32;
+    getenv   :: (string8 name) -> int64;
+    rand     :: () -> int32;
+    srand    :: (uint32 seed) -> void;
+    abs      :: (int32 n) -> int32;
+    labs     :: (int64 n) -> int64;
+
+    // string.h
+    strlen   :: (string8 str) -> uint64;
+    strcmp   :: (string8 s1, string8 s2) -> int32;
+    strncmp  :: (string8 s1, string8 s2, uint64 n) -> int32;
+    strcpy   :: (int64 dst, string8 src) -> int64;
+    strncpy  :: (int64 dst, string8 src, uint64 n) -> int64;
+    strcat   :: (int64 dst, string8 src) -> int64;
+    strchr   :: (string8 s, int32 c) -> int64;
+    strstr   :: (string8 haystack, string8 needle) -> int64;
+    strdup   :: (string8 s) -> int64;
+    memcpy   :: (int64 dst, int64 src, uint64 count) -> int64;
+    memset   :: (int64 dst, int32 val, uint64 count) -> int64;
+    memmove  :: (int64 dst, int64 src, uint64 count) -> int64;
+    memcmp   :: (int64 s1, int64 s2, uint64 count) -> int32;
+
+    // math.h
+    sqrt     :: (float64 x) -> float64;
+    pow      :: (float64 base, float64 exp) -> float64;
+    sin      :: (float64 x) -> float64;
+    cos      :: (float64 x) -> float64;
+    tan      :: (float64 x) -> float64;
+    floor    :: (float64 x) -> float64;
+    ceil     :: (float64 x) -> float64;
+    fabs     :: (float64 x) -> float64;
+    exp      :: (float64 x) -> float64;
+    log      :: (float64 x) -> float64;
+
+    // time.h
+    time     :: (int64 timer) -> int64;
+    clock    :: () -> int64;
+
+    // unistd.h / fcntl.h
+    open     :: (string8 path, int32 flags, int32 mode) -> int32;
+    read     :: (int32 fd, int64 buf, uint64 count) -> int64;
+    write    :: (int32 fd, int64 buf, uint64 count) -> int64;
+    close    :: (int32 fd) -> int32;
+    lseek    :: (int32 fd, int64 offset, int32 whence) -> int64;
+}

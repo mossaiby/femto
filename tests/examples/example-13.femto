@@ -1,0 +1,61 @@
+import std::io;
+
+Point :: struct {
+    int32 x = 0;
+    int32 y = 0;
+}
+
+#export
+main :: () -> int32 {
+    // 1. Local const variables & immutability
+    const int32 MAX_LIMIT = 100;
+    const float64 PI = 3.14159265;
+
+    std::io::print("1. const MAX_LIMIT = ");
+    std::io::println_int(MAX_LIMIT);
+
+    std::io::print("   const PI = ");
+    std::io::println_float(PI);
+
+    // 2. null pointer literals & comparisons
+    Point* pt_ptr = null;
+    int32 is_null = 0;
+    if (pt_ptr == null) then {
+        is_null = 1;
+    }
+
+    std::io::print("2. pt_ptr == null check: ");
+    std::io::println_int(is_null); // Output: 1
+
+    Point p = { .x = 45, .y = 55 };
+    pt_ptr = &p;
+    int32 not_null = 0;
+    if (pt_ptr != null) then {
+        not_null = 1;
+    }
+
+    std::io::print("   pt_ptr != null check: ");
+    std::io::println_int(not_null); // Output: 1
+    std::io::print("   p.x + p.y via pointer: ");
+    std::io::println_int(pt_ptr.x + pt_ptr.y); // Output: 100
+
+    // 3. Array & Slice bounds safety
+    int32[5] numbers = [10, 20, 30, 40, 50];
+    int32[] slice = numbers[1..4]; // [20, 30, 40], len = 3
+
+    // Access within bounds
+    int32 s0 = slice[0]; // 20
+    int32 s1 = slice[1]; // 30
+    int32 s2 = slice[2]; // 40
+
+    std::io::print("3. Slice elements within bounds: ");
+    std::io::println_int(s0 + s1 + s2); // Output: 90
+
+    // Verification check
+    if (MAX_LIMIT == 100 && is_null == 1 && not_null == 1 && (pt_ptr.x + pt_ptr.y == 100) && (s0 + s1 + s2 == 90)) then {
+        std::io::println("4. All Phase 4 memory safety & immutability checks passed!");
+        return 42;
+    } else {
+        return 1;
+    }
+}

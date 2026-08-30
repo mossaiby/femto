@@ -1,0 +1,15 @@
+extern "C" {
+    __builtin_alloc       :: (uint64 bytes) -> int64;
+    __builtin_free        :: (int64 ptr) -> void;
+    __builtin_realloc     :: (int64 ptr, uint64 new_bytes) -> int64;
+    __builtin_memcpy      :: (int64 dst, int64 src, uint64 cnt) -> int64;
+    __builtin_memset      :: (int64 dst, int32 val, uint64 cnt) -> int64;
+    __builtin_print_str   :: (string8 s) -> void;
+    __builtin_print_int   :: (int64 val) -> void;
+    __builtin_print_int128:: (int128 val) -> void;
+    __builtin_print_float :: (float64 val) -> void;
+    __builtin_print_nl    :: () -> void;
+    __builtin_print_char  :: (int32 c) -> void;
+    __builtin_panic       :: (int64 ptr, uint64 len) -> void;
+    __builtin_exit        :: (int32 code) -> void;
+}

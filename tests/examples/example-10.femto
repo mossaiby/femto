@@ -1,0 +1,65 @@
+import std::io;
+import std::c;
+
+// 1. Floating-point function with arithmetic and multiple parameters
+#export
+calculate_area :: (float64 width, float64 height) -> float64 {
+    float64 area = width * height;
+    return area;
+}
+
+// 2. Float comparisons and conditional logic
+#export
+test_float_comparison :: (float64 a, float64 b) -> int32 {
+    if (a < b && b > 10.0) then {
+        return 1;
+    }
+    return 0;
+}
+
+#export
+main :: () -> int32 {
+    // Test 1: Basic float arithmetic
+    float64 x = 12.5;
+    float64 y = 4.0;
+    float64 sum = x + y;       // 16.5
+    float64 diff = x - y;      // 8.5
+    float64 prod = x * y;      // 50.0
+    float64 quot = x / y;      // 3.125
+
+    std::io::print("1. x + y = ");
+    std::io::println_float(sum);
+
+    std::io::print("   x - y = ");
+    std::io::println_float(diff);
+
+    std::io::print("   x * y = ");
+    std::io::println_float(prod);
+
+    std::io::print("   x / y = ");
+    std::io::println_float(quot);
+
+    // Test 2: Float function calls and returns in XMM registers
+    float64 rect_area = calculate_area(7.5, 8.0); // 60.0
+    std::io::print("2. Area of rectangle (7.5 x 8.0): ");
+    std::io::println_float(rect_area);
+
+    // Test 3: Float comparison predicates
+    int32 cmp_res = test_float_comparison(5.5, 15.0); // 1
+    std::io::print("3. Comparison check (5.5 < 15.0): ");
+    std::io::println_int(cmp_res);
+
+    // Test 4: Libc C-FFI math functions
+    float64 rad = 25.0;
+    float64 root = std::c::sqrt(rad); // 5.0
+    std::io::print("4. sqrt(25.0) via libc: ");
+    std::io::println_float(root);
+
+    // Verification check
+    if (sum == 16.5 && diff == 8.5 && prod == 50.0 && rect_area == 60.0 && cmp_res == 1 && root == 5.0) then {
+        std::io::println("5. All Phase 1 native floating-point tests passed!");
+        return 42;
+    } else {
+        return 1;
+    }
+}

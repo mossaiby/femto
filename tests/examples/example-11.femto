@@ -1,0 +1,89 @@
+import std::io;
+import std::c;
+
+// 1. Explicit namespace blocks
+namespace Geometry::Circle {
+    #export
+    area :: (float64 r) -> float64 {
+        return 3.1415926535 * r * r;
+    }
+
+    #export
+    circumference :: (float64 r) -> float64 {
+        return 2.0 * 3.1415926535 * r;
+    }
+}
+
+namespace Math::Series {
+    // 2. C-style 3-clause for loop
+    #export
+    sum_first_n :: (int32 n) -> int32 {
+        int32 total = 0;
+        for (int32 i = 1; i <= n; i++) {
+            total += i;
+        }
+        return total;
+    }
+
+    // 3. For loop with continue and break
+    #export
+    loop_with_control :: () -> int32 {
+        int32 sum = 0;
+        for (int32 i = 0; i < 20; i += 2) {
+            if (i == 4) then {
+                continue; // skips 4
+            }
+            if (i == 12) then {
+                break; // stops at 12
+            }
+            sum += i;
+        }
+        // Values added: 0 + 2 + 6 + 8 + 10 = 26
+        return sum;
+    }
+}
+
+#export
+main :: () -> int32 {
+    // Test 1: Explicit namespace block functions
+    float64 circle_area = Geometry::Circle::area(10.0);
+    std::io::print("1. Circle Area (r=10.0): ");
+    std::io::println_float(circle_area);
+
+    float64 circle_circ = Geometry::Circle::circumference(10.0);
+    std::io::print("   Circle Circumference: ");
+    std::io::println_float(circle_circ);
+
+    // Test 2: 3-clause for loop execution
+    int32 s1 = Math::Series::sum_first_n(10); // 55
+    std::io::print("2. sum_first_n(10): ");
+    std::io::println_int(s1);
+
+    int32 s2 = Math::Series::loop_with_control(); // 26
+    std::io::print("   loop_with_control: ");
+    std::io::println_int(s2);
+
+    // Test 3: Explicit @cast conversions
+    // Integer to float64
+    int32 raw_int = 42;
+    float64 cast_flt = @cast(float64, raw_int); // 42.0
+    std::io::print("3. @cast(float64, 42): ");
+    std::io::println_float(cast_flt);
+
+    // Float64 to integer (truncation)
+    float64 raw_flt = 99.85;
+    int32 cast_int = @cast(int32, raw_flt); // 99
+    std::io::print("   @cast(int32, 99.85): ");
+    std::io::println_int(cast_int);
+
+    // Float64 to float32
+    float32 cast_f32 = @cast(float32, 3.14159265);
+
+    // Verification check
+    if (s1 == 55 && s2 == 26 && cast_flt == 42.0 && cast_int == 99) then {
+        std::io::println("4. All Phase 2 tests passed successfully!");
+        return 42;
+    } else {
+        return 1;
+    }
+}

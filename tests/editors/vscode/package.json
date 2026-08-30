@@ -1,0 +1,83 @@
+{
+  "name": "femto-vscode",
+  "displayName": "Femto Language Support",
+  "description": "Rich syntax highlighting, Language Server Protocol (LSP), live diagnostics, type hovers, and symbols for the Femto programming language.",
+  "version": "0.2.0",
+  "publisher": "femto-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:femto"
+  ],
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "femto",
+    "systems programming",
+    "compiler",
+    "lsp",
+    "syntax highlighting"
+  ],
+  "scripts": {
+    "package": "vsce package",
+    "vscode:prepublish": "npm install"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "femto",
+        "aliases": [
+          "Femto",
+          "femto"
+        ],
+        "extensions": [
+          ".femto",
+          ".femt"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "femto",
+        "scopeName": "source.femto",
+        "path": "./syntaxes/femto.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Femto",
+      "properties": {
+        "femto.compilerPath": {
+          "type": "string",
+          "default": "femtoc",
+          "description": "Path to the femtoc compiler executable providing LSP language services."
+        },
+        "femto.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the Femto Language Server."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.1"
+  },
+  "allowScripts": {
+    "@vscode/vsce-sign@2.1.0": true,
+    "keytar@7.9.0": true
+  }
+}

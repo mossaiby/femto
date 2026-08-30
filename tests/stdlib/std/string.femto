@@ -1,0 +1,78 @@
+import std::builtin;
+import std::c;
+
+String :: struct {
+    int64  data;
+    uint64 length;
+    uint64 capacity;
+}
+
+#export
+string_create :: (uint64 init_cap) -> String {
+    uint64 cap = init_cap;
+    if (cap < 16) then {
+        cap = 16;
+    }
+    int64 ptr = __builtin_alloc(cap);
+    __builtin_memset(ptr, 0, 1);
+    String s = { .data = ptr, .length = 0, .capacity = cap };
+    return s;
+}
+
+#export
+string_append_char :: (String* s, int32 c) -> void {
+    if (s.length + 2 >= s.capacity) then {
+        uint64 new_cap = s.capacity * 2;
+        int64 new_ptr = __builtin_realloc(s.data, new_cap);
+        s.data = new_ptr;
+        s.capacity = new_cap;
+    }
+    int64 dest = s.data + @cast(int64, s.length);
+    __builtin_memset(dest, c, 1);
+    s.length = s.length + 1;
+    int64 term = s.data + @cast(int64, s.length);
+    __builtin_memset(term, 0, 1);
+}
+
+#export
+string_append_str :: (String* s, string8 str) -> void {
+    uint64 str_len = std::c::strlen(str);
+    if (str_len == 0) then {
+        return;
+    }
+    if (s.length + str_len + 1 >= s.capacity) then {
+        uint64 new_cap = (s.capacity + str_len) * 2;
+        int64 new_ptr = __builtin_realloc(s.data, new_cap);
+        s.data = new_ptr;
+        s.capacity = new_cap;
+    }
+    int64 dest = s.data + @cast(int64, s.length);
+    int64 src = @cast(int64, str);
+    __builtin_memcpy(dest, src, str_len);
+    s.length = s.length + str_len;
+    int64 term = s.data + @cast(int64, s.length);
+    __builtin_memset(term, 0, 1);
+}
+
+#export
+string_c_str :: (String* s) -> string8 {
+    return @cast(string8, s.data);
+}
+
+#export
+string_clear :: (String* s) -> void {
+    s.length = 0;
+    if (s.data != 0) then {
+        __builtin_memset(s.data, 0, 1);
+    }
+}
+
+#export
+string_destroy :: (String* s) -> void {
+    if (s.data != 0) then {
+        __builtin_free(s.data);
+        s.data = 0;
+        s.length = 0;
+        s.capacity = 0;
+    }
+}

@@ -1,0 +1,38 @@
+import std::c;
+import std::io;
+
+#export
+main :: () -> int32 {
+    // 1. Calling libc I/O
+    std::c::puts("1. Testing libc wrapper in Femto via std::c::puts!");
+
+    // 2. Calling libc memory allocation and string functions
+    int64 buf = std::c::malloc(64);
+    std::c::memset(buf, 65, 5); // 5 'A's (ASCII 65)
+    int64 null_term_pos = buf + 5;
+    std::c::memset(null_term_pos, 0, 1); // null terminator
+
+    std::io::print("   Allocated string: ");
+    std::c::puts(@cast(string8, buf)); // Output: "AAAAA"
+
+    uint64 len = std::c::strlen(@cast(string8, buf));
+    std::io::print("   String length: ");
+    std::io::println_int(len); // Output: 5
+
+    std::c::free(buf);
+
+    // 3. Calling libc process & environment
+    int64 user = std::c::getenv("USER");
+    if (user != 0) then {
+        std::io::print("2. Current USER from libc getenv: ");
+        std::c::puts(@cast(string8, user));
+    }
+
+    // 4. Calling libc pseudo-random number generator
+    std::c::srand(1337);
+    int32 r = std::c::abs(std::c::rand() % 100);
+    std::io::print("3. Random number in [0, 99]: ");
+    std::io::println_int(r);
+
+    return 42;
+}

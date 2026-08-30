@@ -1,0 +1,83 @@
+import std::io;
+import std::math;
+import std::string;
+import std::fs;
+import std::collection;
+import std::c;
+
+#export
+main :: () -> int32 {
+    // ------------------------------------------------------------------------
+    // 1. Test std::math
+    // ------------------------------------------------------------------------
+    float64 sin_val = std::math::sin(std::math::deg_to_rad(90.0)); // 1.0
+    float64 clamped = std::math::clamp(150.0, 0.0, 100.0);        // 100.0
+    float64 power   = std::math::pow(2.0, 8.0);                   // 256.0
+
+    std::io::print("1. [std::math] sin(90 deg): ");
+    std::io::println_float(sin_val);
+
+    std::io::print("   [std::math] clamp(150, 0, 100): ");
+    std::io::println_float(clamped);
+
+    std::io::print("   [std::math] pow(2, 8): ");
+    std::io::println_float(power);
+
+    // ------------------------------------------------------------------------
+    // 2. Test std::string (Dynamic Heap String Builder)
+    // ------------------------------------------------------------------------
+    String msg = string_create(8);
+    string_append_str(&msg, "Femto is ");
+    string_append_str(&msg, "100% complete!");
+
+    std::io::print("2. [std::string] Constructed string: ");
+    std::io::println(string_c_str(&msg));
+
+    std::io::print("   [std::string] String length: ");
+    std::io::println_int(msg.length); // 23
+
+    // ------------------------------------------------------------------------
+    // 3. Test std::fs (File I/O Stream Operations)
+    // ------------------------------------------------------------------------
+    int32 write_fd = std::fs::open_write("femto_test.txt")??;
+    std::fs::write_str(write_fd, string_c_str(&msg));
+    std::fs::close_file(write_fd);
+
+    int32 read_fd = std::fs::open_read("femto_test.txt")??;
+    int64 read_buf = std::c::malloc(64);
+    int64 bytes_read = std::fs::read_bytes(read_fd, read_buf, 64);
+    std::fs::close_file(read_fd);
+
+    // Terminate read buffer for printing
+    int64 null_pos = read_buf + bytes_read;
+    std::c::memset(null_pos, 0, 1);
+
+    std::io::print("3. [std::fs] Bytes read from file: ");
+    std::io::println_int(bytes_read); // 23
+    std::io::print("   [std::fs] File content: ");
+    std::io::println(@cast(string8, read_buf));
+
+    std::c::free(read_buf);
+    string_destroy(&msg);
+
+    // ------------------------------------------------------------------------
+    // 4. Test 128-bit Math & 3-clause for loop
+    // ------------------------------------------------------------------------
+    int128 total_128 = @cast(int128, 0);
+    for (int32 i = 1; i <= 10; i++) {
+        total_128 = total_128 + @cast(int128, i * 1000000);
+    }
+    // Sum = (1+2+...+10)*1000000 = 55000000
+    std::io::print("4. [128-bit & for] 128-bit sum: ");
+    std::io::println_int128(total_128);
+
+    // ------------------------------------------------------------------------
+    // Final Verification
+    // ------------------------------------------------------------------------
+    if (sin_val == 1.0 && clamped == 100.0 && power == 256.0 && bytes_read == 23 && total_128 == @cast(int128, 55000000)) then {
+        std::io::println("5. GRAND TEST SUCCESSFUL: Femto is 100% operational!");
+        return 42;
+    } else {
+        return 1;
+    }
+}

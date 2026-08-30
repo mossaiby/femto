@@ -1,0 +1,25 @@
+import std::builtin;
+
+#export
+alloc_raw :: (uint64 bytes) -> !int64 {
+    int64 ptr = __builtin_alloc(bytes);
+    if (ptr == 0) then {
+        return failure(102); // Out of memory error code
+    }
+    return success(ptr);
+}
+
+#export
+free :: (int64 ptr) -> void {
+    __builtin_free(ptr);
+}
+
+#export
+copy :: (int64 dst, int64 src, uint64 count) -> void {
+    __builtin_memcpy(dst, src, count);
+}
+
+#export
+set :: (int64 dst, int32 val, uint64 count) -> void {
+    __builtin_memset(dst, val, count);
+}

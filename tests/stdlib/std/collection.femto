@@ -1,0 +1,25 @@
+import std::builtin;
+
+Array :: struct <T> {
+    int64  data;
+    uint64 length;
+    uint64 capacity;
+}
+
+#export
+array_create :: <T>(uint64 init_cap) -> Array<T> {
+    uint64 bytes = @sizeof(T) * init_cap;
+    int64 ptr = __builtin_alloc(bytes);
+    Array<T> a = { .data = ptr, .length = 0, .capacity = init_cap };
+    return a;
+}
+
+#export
+array_destroy :: <T>(Array<T>* arr) -> void {
+    if (arr.data != 0) then {
+        __builtin_free(arr.data);
+        arr.data = 0;
+        arr.length = 0;
+        arr.capacity = 0;
+    }
+}
