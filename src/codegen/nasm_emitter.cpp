@@ -899,8 +899,11 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
     text_sec_ << "    mov rbp, rsp\n";
 
     uint32_t xmm_save_space = (uint32_t)(used_saved_xmm_regs_.size() * 16);
-    uint32_t total_alloc = frame_size + xmm_save_space;
-    total_alloc = (total_alloc + 15) & ~15;
+    uint32_t base_alloc = ((frame_size + xmm_save_space + 15) & ~15);
+    // Maintain strict 16-byte alignment of RSP for the entire function body
+    uint32_t align_pad = (used_saved_gp_regs_.size() % 2 != 0) ? 8 : 0;
+    uint32_t total_alloc = base_alloc + align_pad;
+
     text_sec_ << "    sub rsp, " << total_alloc << "\n";
 
     for (size_t xi = 0; xi < used_saved_xmm_regs_.size(); ++xi) {
