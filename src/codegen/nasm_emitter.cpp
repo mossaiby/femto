@@ -604,9 +604,6 @@ SemaType* NasmEmitter::resolve_type_node(ASTType* ast_ty) {
     return it != type_env_.end() ? it->second : nullptr;
 }
 
-// -----------------------------------------------------------------------------
-// Tier 2: Static Analysis for Variable Usage & Register Allocation
-// -----------------------------------------------------------------------------
 void NasmEmitter::analyze_variable_usage(const ASTFunctionDecl* fn, std::unordered_map<std::string, VarUsageStats>& stats) {
     for (size_t i = 0; i < fn->params.size(); ++i) {
         auto* p_ty = resolve_type_node(fn->params[i].type);
@@ -835,7 +832,11 @@ void NasmEmitter::emit_epilogue_sequence() {
 std::string NasmEmitter::generate_assembly(const ASTProgram& program) {
     current_program_ = &program;
     text_sec_   << "default rel\nsection .text\n";
-    rodata_sec_ << "section .rodata\n";
+    if (target_os_ == TargetOS::Windows) {
+        rodata_sec_ << "section .rdata\n";
+    } else {
+        rodata_sec_ << "section .rodata\n";
+    }
     rodata_sec_ << "str_bounds_panic: db \"Slice index out of bounds\", 10, 0\n";
     data_sec_   << "section .data\n";
 
@@ -922,6 +923,7 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
         bool is_16b = fn->params[i].is_variadic_slice || (p_ty && is_16byte_type(p_ty));
 
         if (target_os_ == TargetOS::Windows) {
+            size_t stack_arg_base = 64 + used_saved_gp_regs_.size() * 8;
             if (is_16b) {
                 stack_off += 16;
                 VarInfo vi{ stack_off, p_ty };
@@ -932,7 +934,7 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
                     int_idx += 2;
                 } else if (int_idx < 4) {
                     text_sec_ << "    mov [rbp - " << stack_off << "], " << int_args_ms64[int_idx++].r64 << "\n";
-                    text_sec_ << "    mov rax, [rbp + 64]\n";
+                    text_sec_ << "    mov rax, [rbp + " << stack_arg_base << "]\n";
                     text_sec_ << "    mov [rbp - " << (stack_off - 8) << "], rax\n";
                 }
             } else if (p_ty && p_ty->is_floating_point()) {
@@ -943,7 +945,7 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
                         flt_idx++;
                         int_idx++;
                     } else {
-                        text_sec_ << "    movsd " << target_xmm << ", [rbp + " << (64 + (i - 4) * 8) << "]\n";
+                        text_sec_ << "    movsd " << target_xmm << ", [rbp + " << (stack_arg_base + (i - 4) * 8) << "]\n";
                     }
                 } else {
                     stack_off += 8;
@@ -955,7 +957,7 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
                         flt_idx++;
                         int_idx++;
                     } else {
-                        text_sec_ << "    movsd xmm0, [rbp + " << (64 + (i - 4) * 8) << "]\n";
+                        text_sec_ << "    movsd xmm0, [rbp + " << (stack_arg_base + (i - 4) * 8) << "]\n";
                         text_sec_ << "    movsd [rbp - " << stack_off << "], xmm0\n";
                     }
                 }
@@ -968,7 +970,7 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
                         else if (p_ty->size_bytes == 1) text_sec_ << "    mov " << target_gp << ", " << int_args_ms64[int_idx++].r8 << "\n";
                         else text_sec_ << "    mov " << target_gp << ", " << int_args_ms64[int_idx++].r64 << "\n";
                     } else {
-                        text_sec_ << "    mov " << target_gp << ", [rbp + " << (64 + (i - 4) * 8) << "]\n";
+                        text_sec_ << "    mov " << target_gp << ", [rbp + " << (stack_arg_base + (i - 4) * 8) << "]\n";
                     }
                 } else {
                     stack_off += 8;
@@ -980,7 +982,7 @@ void NasmEmitter::emit_function(const ASTFunctionDecl* fn) {
                         else if (p_ty->size_bytes == 1) text_sec_ << "    mov [rbp - " << stack_off << "], " << int_args_ms64[int_idx++].r8 << "\n";
                         else text_sec_ << "    mov [rbp - " << stack_off << "], " << int_args_ms64[int_idx++].r64 << "\n";
                     } else {
-                        text_sec_ << "    mov rax, [rbp + " << (64 + (i - 4) * 8) << "]\n";
+                        text_sec_ << "    mov rax, [rbp + " << (stack_arg_base + (i - 4) * 8) << "]\n";
                         text_sec_ << "    mov [rbp - " << stack_off << "], rax\n";
                     }
                 }
@@ -1148,16 +1150,32 @@ void NasmEmitter::emit_lvalue_address(const ASTExpr* lval) {
                     text_sec_ << "    mov rcx, [rax + 8]\n";
                     text_sec_ << "    cmp r10, rcx\n";
                     text_sec_ << "    jb " << ok_lbl << "\n";
-                    text_sec_ << "    lea rdi, [rel str_bounds_panic]\n";
-                    text_sec_ << "    mov rsi, 27\n";
-                    text_sec_ << "    call __builtin_panic\n";
+                    if (target_os_ == TargetOS::Windows) {
+                        text_sec_ << "    lea rcx, [rel str_bounds_panic]\n";
+                        text_sec_ << "    mov rdx, 27\n";
+                        text_sec_ << "    sub rsp, 32\n";
+                        text_sec_ << "    call __builtin_panic\n";
+                        text_sec_ << "    add rsp, 32\n";
+                    } else {
+                        text_sec_ << "    lea rdi, [rel str_bounds_panic]\n";
+                        text_sec_ << "    mov rsi, 27\n";
+                        text_sec_ << "    call __builtin_panic\n";
+                    }
                     text_sec_ << ok_lbl << ":\n";
                 } else if (arr_bound > 0) {
                     text_sec_ << "    cmp r10, " << arr_bound << "\n";
                     text_sec_ << "    jb " << ok_lbl << "\n";
-                    text_sec_ << "    lea rdi, [rel str_bounds_panic]\n";
-                    text_sec_ << "    mov rsi, 27\n";
-                    text_sec_ << "    call __builtin_panic\n";
+                    if (target_os_ == TargetOS::Windows) {
+                        text_sec_ << "    lea rcx, [rel str_bounds_panic]\n";
+                        text_sec_ << "    mov rdx, 27\n";
+                        text_sec_ << "    sub rsp, 32\n";
+                        text_sec_ << "    call __builtin_panic\n";
+                        text_sec_ << "    add rsp, 32\n";
+                    } else {
+                        text_sec_ << "    lea rdi, [rel str_bounds_panic]\n";
+                        text_sec_ << "    mov rsi, 27\n";
+                        text_sec_ << "    call __builtin_panic\n";
+                    }
                     text_sec_ << ok_lbl << ":\n";
                 }
             }
@@ -1795,9 +1813,9 @@ void NasmEmitter::emit_statement(const ASTStmt* stmt, uint32_t& stack_offset) {
                 if (!scope.empty()) { has_defers = true; break; }
             }
             if (has_defers) {
-                text_sec_ << "    push rdx\n    push rax\n    sub rsp, 8\n    movsd [rsp], xmm0\n";
+                text_sec_ << "    push rdx\n    push rax\n    sub rsp, 16\n    movsd [rsp], xmm0\n";
                 emit_deferred_statements(stack_offset);
-                text_sec_ << "    movsd xmm0, [rsp]\n    add rsp, 8\n    pop rax\n    pop rdx\n";
+                text_sec_ << "    movsd xmm0, [rsp]\n    add rsp, 16\n    pop rax\n    pop rdx\n";
             }
             emit_epilogue_sequence();
             break;
@@ -2158,10 +2176,10 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 if (!scope.empty()) { has_defers = true; break; }
             }
             if (has_defers) {
-                text_sec_ << "    push rdx\n    push rax\n";
+                text_sec_ << "    push rdx\n    push rax\n    sub rsp, 16\n    movsd [rsp], xmm0\n";
                 uint32_t dummy_off = current_stack_offset_;
                 emit_deferred_statements(dummy_off);
-                text_sec_ << "    pop rax\n    pop rdx\n";
+                text_sec_ << "    movsd xmm0, [rsp]\n    add rsp, 16\n    pop rax\n    pop rdx\n";
             }
             emit_epilogue_sequence();
             text_sec_ << ok_lbl << ":\n";
@@ -2501,7 +2519,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                         text_sec_ << "    sub rsp, 8\n    movsd [rsp], xmm0\n";
                     } else if (is_16b_arg[i]) {
                         emit_expression(expr->args[i]);
-                        text_sec_ << "    push rdx\n    push rax\n";
+                        text_sec_ << "    push rax\n    push rdx\n";
                     } else {
                         emit_expression(expr->args[i]);
                         text_sec_ << "    push rax\n";
@@ -2516,8 +2534,8 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                     if (is_float_arg[i]) {
                         slots.push_back({true});
                     } else if (is_16b_arg[i]) {
-                        slots.push_back({false}); // low (data)
-                        slots.push_back({false}); // high (length)
+                        slots.push_back({false}); // slot for low (data)
+                        slots.push_back({false}); // slot for high (length)
                     } else {
                         slots.push_back({false});
                     }
@@ -2525,19 +2543,21 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
 
                 size_t total_slots = slots.size();
                 size_t extra_slots = (total_slots > 4) ? (total_slots - 4) : 0;
-                size_t shadow_and_stack = 32 + extra_slots * 8;
-                shadow_and_stack = (shadow_and_stack + 15) & ~15;
+                size_t pushed_bytes = total_slots * 8;
+                size_t needed_space = 32 + extra_slots * 8;
+                size_t total_call_alloc = (pushed_bytes + needed_space + 15) & ~15;
+                size_t shadow_and_stack = total_call_alloc - pushed_bytes;
 
                 text_sec_ << "    sub rsp, " << shadow_and_stack << "\n";
                 for (size_t k = 4; k < total_slots; ++k) {
-                    size_t src_off = shadow_and_stack + k * 8;
+                    size_t src_off = shadow_and_stack + (total_slots - 1 - k) * 8;
                     size_t dst_off = 32 + (k - 4) * 8;
                     text_sec_ << "    mov rax, [rsp + " << src_off << "]\n";
                     text_sec_ << "    mov [rsp + " << dst_off << "], rax\n";
                 }
 
                 for (size_t k = 0; k < std::min(total_slots, (size_t)4); ++k) {
-                    size_t src_off = shadow_and_stack + k * 8;
+                    size_t src_off = shadow_and_stack + (total_slots - 1 - k) * 8;
                     text_sec_ << "    mov " << int_args_ms64[k].r64 << ", [rsp + " << src_off << "]\n";
                     if (slots[k].is_float) {
                         text_sec_ << "    movq xmm" << k << ", " << int_args_ms64[k].r64 << "\n";
@@ -2545,7 +2565,7 @@ void NasmEmitter::emit_expression(const ASTExpr* expr) {
                 }
 
                 text_sec_ << "    call " << sanitize_nasm_identifier(callee) << "\n";
-                text_sec_ << "    add rsp, " << (shadow_and_stack + total_slots * 8) << "\n";
+                text_sec_ << "    add rsp, " << total_call_alloc << "\n";
             } else {
                 // System V (Linux)
                 for (size_t i = 0; i < expr->args.size(); ++i) {

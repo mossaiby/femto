@@ -30,7 +30,7 @@ main :: () -> int32 {
 
     // 3. String comparisons (== and !=)
     int32 cmp_ok = 0;
-    if (arch == "x86_64" && endian == "little" && target == "x86_64-linux" && ty_x == "int32" && arch != "arm64") then {
+    if (arch == "x86_64" && endian == "little" && (target == "x86_64-linux" || target == "x86_64-windows") && ty_x == "int32" && arch != "arm64") then {
         cmp_ok = 1;
     }
 

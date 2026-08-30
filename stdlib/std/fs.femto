@@ -3,7 +3,12 @@ import std::builtin;
 
 #export
 open_read :: (string8 path) -> !int32 {
-    int32 fd = std::c::open(path, 0, 0); // O_RDONLY = 0
+    #if (@target == "x86_64-windows") {
+        // Windows CRT: _O_RDONLY(0) | _O_BINARY(32768) = 32768
+        int32 fd = std::c::open(path, 32768, 0);
+    } #else {
+        int32 fd = std::c::open(path, 0, 0); // O_RDONLY = 0
+    }
     if (fd < 0) then {
         return failure(103); // File open error
     }

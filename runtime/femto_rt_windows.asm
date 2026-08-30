@@ -76,6 +76,7 @@ __builtin_memcpy:
     mov rsi, rdx
     mov rcx, r8
     mov rax, rdi
+    cld
     rep movsb
     pop rsi
     pop rdi
@@ -90,6 +91,7 @@ __builtin_memset:
     mov al, dl
     mov rcx, r8
     mov r8, rdi
+    cld
     rep stosb
     mov rax, r8
     pop rdi
@@ -275,7 +277,7 @@ __builtin_exit:
     leave
     ret
 
-section .rodata
+section .rdata
 fmt_str: db "%s", 0
 fmt_int64: db "%lld", 0
 fmt_float: db "%f", 0
