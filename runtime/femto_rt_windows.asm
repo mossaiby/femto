@@ -19,7 +19,6 @@ global c_abs
 extern malloc
 extern free
 extern realloc
-extern printf
 extern putchar
 extern exit
 
@@ -98,18 +97,13 @@ __builtin_memset:
     ret
 
 ; -----------------------------------------------------------------------------
-; __builtin_print_str(rcx = const char* ptr)
+; __builtin_print_char(ecx = int32 c)
 ; -----------------------------------------------------------------------------
-__builtin_print_str:
+__builtin_print_char:
     push rbp
     mov rbp, rsp
     sub rsp, 32
-    test rcx, rcx
-    jz .str_done
-    mov rdx, rcx
-    lea rcx, [rel fmt_str]
-    call printf
-.str_done:
+    call putchar
     leave
     ret
 
@@ -126,14 +120,29 @@ __builtin_print_nl:
     ret
 
 ; -----------------------------------------------------------------------------
-; __builtin_print_char(ecx = int32 c)
+; __builtin_print_str(rcx = const char* ptr)
 ; -----------------------------------------------------------------------------
-__builtin_print_char:
+__builtin_print_str:
     push rbp
+    push rbx
+    push rsi
     mov rbp, rsp
     sub rsp, 32
+    mov rbx, rcx
+    test rbx, rbx
+    jz .str_done
+.str_loop:
+    movzx ecx, byte [rbx]
+    test cl, cl
+    jz .str_done
     call putchar
-    leave
+    inc rbx
+    jmp .str_loop
+.str_done:
+    mov rsp, rbp
+    pop rsi
+    pop rbx
+    pop rbp
     ret
 
 ; -----------------------------------------------------------------------------
@@ -141,12 +150,54 @@ __builtin_print_char:
 ; -----------------------------------------------------------------------------
 __builtin_print_int:
     push rbp
+    push rbx
+    push r12
+    push r13
     mov rbp, rsp
-    sub rsp, 32
-    mov rdx, rcx
-    lea rcx, [rel fmt_int64]
-    call printf
-    leave
+    sub rsp, 48
+
+    mov rax, rcx
+    lea r12, [rbp - 1]
+    mov byte [r12], 0
+
+    xor r13d, r13d      ; is_negative = 0
+    test rax, rax
+    jns .pos
+    neg rax
+    mov r13d, 1
+
+.pos:
+    mov rbx, 10
+.loop:
+    xor rdx, rdx
+    div rbx
+    add dl, '0'
+    dec r12
+    mov [r12], dl
+    test rax, rax
+    jnz .loop
+
+    test r13d, r13d
+    jz .print
+    dec r12
+    mov byte [r12], '-'
+
+.print:
+    mov rbx, r12
+.print_loop:
+    movzx ecx, byte [rbx]
+    test cl, cl
+    jz .done
+    call putchar
+    inc rbx
+    jmp .print_loop
+
+.done:
+    mov rsp, rbp
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
     ret
 
 ; -----------------------------------------------------------------------------
@@ -154,12 +205,13 @@ __builtin_print_int:
 ; -----------------------------------------------------------------------------
 __builtin_print_int128:
     push rbp
-    mov rbp, rsp
     push rbx
     push r12
     push r13
     push r14
-    sub rsp, 96
+    push r15
+    mov rbp, rsp
+    sub rsp, 80
 
     mov r12, rcx
     mov r13, rdx
@@ -176,18 +228,16 @@ __builtin_print_int128:
     adc r13, 0
 
 .pos_128:
-    lea rcx, [rbp - 49]
-    mov byte [rcx], 0
+    lea r15, [rbp - 1]
+    mov byte [r15], 0
     mov rbx, 10
-    xor r14, r14
 
     mov rax, r12
     or rax, r13
     jnz .div_loop
 
-    dec rcx
-    mov byte [rcx], '0'
-    mov r14, 1
+    dec r15
+    mov byte [r15], '0'
     jmp .print_digits
 
 .div_loop:
@@ -205,22 +255,28 @@ __builtin_print_int128:
     mov r12, rax
 
     add dl, '0'
-    dec rcx
-    mov [rcx], dl
-    inc r14
+    dec r15
+    mov [r15], dl
     jmp .div_loop
 
 .print_digits:
-    mov rdx, rcx
-    lea rcx, [rel fmt_str]
-    call printf
+    mov rbx, r15
+.p_loop:
+    movzx ecx, byte [rbx]
+    test cl, cl
+    jz .p_done
+    call putchar
+    inc rbx
+    jmp .p_loop
 
-    add rsp, 96
+.p_done:
+    mov rsp, rbp
+    pop r15
     pop r14
     pop r13
     pop r12
     pop rbx
-    leave
+    pop rbp
     ret
 
 ; -----------------------------------------------------------------------------
@@ -228,13 +284,73 @@ __builtin_print_int128:
 ; -----------------------------------------------------------------------------
 __builtin_print_float:
     push rbp
+    push rbx
+    push r12
+    push r13
     mov rbp, rsp
-    sub rsp, 32
-    movaps xmm1, xmm0
-    movq rdx, xmm0
-    lea rcx, [rel fmt_float]
-    call printf
-    leave
+    sub rsp, 48
+
+    movsd [rbp - 40], xmm0
+
+    xorpd xmm1, xmm1
+    ucomisd xmm0, xmm1
+    jae .pos_float
+
+    mov ecx, '-'
+    call putchar
+
+    movsd xmm0, [rbp - 40]
+    xorpd xmm1, xmm1
+    subsd xmm1, xmm0
+    movsd xmm0, xmm1
+    movsd [rbp - 40], xmm0
+
+.pos_float:
+    cvttsd2si r12, xmm0
+    mov rcx, r12
+    call __builtin_print_int
+
+    mov ecx, '.'
+    call putchar
+
+    cvtsi2sd xmm1, r12
+    movsd xmm0, [rbp - 40]
+    subsd xmm0, xmm1
+
+    mov rax, 1000000
+    cvtsi2sd xmm1, rax
+    mulsd xmm0, xmm1
+    cvttsd2si r13, xmm0
+
+    mov rax, r13
+    mov rbx, 10
+    lea r12, [rbp - 1]
+    mov byte [r12], 0
+    mov r8d, 6
+.frac_loop:
+    xor rdx, rdx
+    div rbx
+    add dl, '0'
+    dec r12
+    mov [r12], dl
+    dec r8d
+    jnz .frac_loop
+
+    mov rbx, r12
+.frac_print:
+    movzx ecx, byte [rbx]
+    test cl, cl
+    jz .flt_done
+    call putchar
+    inc rbx
+    jmp .frac_print
+
+.flt_done:
+    mov rsp, rbp
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
     ret
 
 ; -----------------------------------------------------------------------------
@@ -242,43 +358,42 @@ __builtin_print_float:
 ; -----------------------------------------------------------------------------
 __builtin_panic:
     push rbp
-    mov rbp, rsp
     push rbx
-    push r12
+    push rsi
+    mov rbp, rsp
     sub rsp, 32
-    mov r12, rcx
+    mov rbx, rcx
 
-    lea rcx, [rel panic_prefix]
-    call printf
+    lea rsi, [rel panic_msg]
+.panic_loop1:
+    movzx ecx, byte [rsi]
+    test cl, cl
+    jz .panic_body
+    call putchar
+    inc rsi
+    jmp .panic_loop1
 
-    lea rcx, [rel fmt_str]
-    mov rdx, r12
-    call printf
+.panic_body:
+    test rbx, rbx
+    jz .panic_nl
+.panic_loop2:
+    movzx ecx, byte [rbx]
+    test cl, cl
+    jz .panic_nl
+    call putchar
+    inc rbx
+    jmp .panic_loop2
 
+.panic_nl:
     mov ecx, 10
     call putchar
-
     mov ecx, 1
     call exit
-    add rsp, 32
-    pop r12
+    mov rsp, rbp
+    pop rsi
     pop rbx
-    leave
-    ret
-
-; -----------------------------------------------------------------------------
-; __builtin_exit(ecx = int32 code)
-; -----------------------------------------------------------------------------
-__builtin_exit:
-    push rbp
-    mov rbp, rsp
-    sub rsp, 32
-    call exit
-    leave
+    pop rbp
     ret
 
 section .rdata
-fmt_str: db "%s", 0
-fmt_int64: db "%lld", 0
-fmt_float: db "%f", 0
-panic_prefix: db "Femto panic: ", 0
+panic_msg: db "Femto panic: ", 0
