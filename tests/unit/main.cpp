@@ -18,7 +18,7 @@ int main() {
     auto start_all = std::chrono::high_resolution_clock::now();
 
     for (const auto& [suite, suite_tests] : grouped_tests) {
-        std::cout << "\n  \033[1;35m● Suite: " << suite << "\033[0m (" << suite_tests.size() << " test cases)\n";
+        std::cout << "\n  \033[1;35m+ Suite: " << suite << "\033[0m (" << suite_tests.size() << " test cases)\n";
         for (const auto& test : suite_tests) {
             std::cout << "    - " << test.name << " ... " << std::flush;
             auto t0 = std::chrono::high_resolution_clock::now();
